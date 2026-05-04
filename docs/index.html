@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FocusTube — Distraction-Free YouTube</title>
+  <meta name="description" content="FocusTube is a free Chrome extension that blocks Shorts, filters distracting content, tracks your focus score, and locks you into productive YouTube sessions.">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0e0e10;
+      --card:     #18181b;
+      --border:   rgba(255,255,255,0.07);
+      --accent:   #7c3aed;
+      --accent2:  #8b5cf6;
+      --success:  #10b981;
+      --text:     #f4f4f5;
+      --muted:    #a1a1aa;
+      --dim:      #52525b;
+      --font:     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── HEADER ─────────────────────────── */
+    header {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 40px;
+      background: rgba(14,14,16,0.85);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-icon {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, var(--accent), #d946ef);
+      border-radius: 8px;
+      box-shadow: 0 0 16px rgba(124,58,237,0.5);
+    }
+    .logo-text { font-size: 17px; font-weight: 700; letter-spacing: -0.03em; color: var(--text); }
+
+    .header-cta {
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      transition: background 0.2s, box-shadow 0.2s;
+      box-shadow: 0 4px 14px rgba(124,58,237,0.3);
+    }
+    .header-cta:hover { background: var(--accent2); box-shadow: 0 6px 20px rgba(124,58,237,0.45); }
+
+    /* ── HERO ───────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -40%; left: 50%;
+      transform: translateX(-50%);
+      width: 700px; height: 700px;
+      background: radial-gradient(circle, rgba(124,58,237,0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.25);
+      color: var(--accent2);
+      padding: 5px 14px;
+      border-radius: 99px;
+      font-size: 12px; font-weight: 600;
+      letter-spacing: 0.04em;
+      margin-bottom: 28px;
+    }
+    .hero-badge-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent2);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    h1 {
+      font-size: clamp(36px, 6vw, 68px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      margin-bottom: 22px;
+      max-width: 780px;
+    }
+
+    h1 span {
+      background: linear-gradient(135deg, var(--accent2), #d946ef);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: clamp(16px, 2.5vw, 20px);
+      color: var(--muted);
+      max-width: 520px;
+      margin-bottom: 40px;
+      line-height: 1.7;
+    }
+
+    .hero-btns {
+      display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+      margin-bottom: 60px;
+    }
+
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      padding: 14px 28px;
+      border-radius: 10px;
+      font-size: 15px; font-weight: 600;
+      box-shadow: 0 6px 24px rgba(124,58,237,0.4);
+      transition: all 0.2s;
+    }
+    .btn-primary:hover { background: var(--accent2); transform: translateY(-1px); box-shadow: 0 8px 28px rgba(124,58,237,0.5); }
+
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      text-decoration: none;
+      padding: 14px 28px;
+      border-radius: 10px;
+      font-size: 15px; font-weight: 500;
+      transition: all 0.2s;
+    }
+    .btn-ghost:hover { border-color: rgba(255,255,255,0.15); color: var(--text); background: rgba(255,255,255,0.04); }
+
+    .hero-stats {
+      display: flex; gap: 40px; flex-wrap: wrap; justify-content: center;
+    }
+    .stat { text-align: center; }
+    .stat-num { font-size: 26px; font-weight: 800; color: var(--text); }
+    .stat-label { font-size: 12px; color: var(--dim); margin-top: 2px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    /* ── FEATURES ───────────────────────── */
+    section { padding: 96px 24px; }
+
+    .container { max-width: 1080px; margin: 0 auto; }
+
+    .section-label {
+      text-align: center;
+      font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--accent2);
+      margin-bottom: 14px;
+    }
+
+    h2 {
+      text-align: center;
+      font-size: clamp(26px, 4vw, 40px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 14px;
+    }
+
+    .section-sub {
+      text-align: center;
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 500px;
+      margin: 0 auto 60px;
+      line-height: 1.7;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+    }
+
+    .feature-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .feature-card:hover { border-color: rgba(124,58,237,0.3); transform: translateY(-2px); }
+
+    .feature-icon {
+      font-size: 28px;
+      margin-bottom: 14px;
+      display: block;
+    }
+
+    .feature-name {
+      font-size: 15px; font-weight: 700;
+      margin-bottom: 6px; color: var(--text);
+    }
+
+    .feature-desc {
+      font-size: 13px; color: var(--muted); line-height: 1.6;
+    }
+
+    .feature-tag {
+      display: inline-block;
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.2);
+      color: var(--accent2);
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 10px; font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-top: 10px;
+    }
+    .feature-tag.green {
+      background: rgba(16,185,129,0.1);
+      border-color: rgba(16,185,129,0.2);
+      color: var(--success);
+    }
+
+    /* ── INSTALL STEPS ──────────────────── */
+    .install-section {
+      background: linear-gradient(180deg, var(--bg) 0%, rgba(124,58,237,0.04) 50%, var(--bg) 100%);
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+      margin-bottom: 48px;
+    }
+
+    .step {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px 24px;
+      position: relative;
+    }
+
+    .step-num {
+      font-size: 11px; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--accent2);
+      margin-bottom: 14px;
+    }
+
+    .step-icon { font-size: 32px; margin-bottom: 12px; display: block; }
+
+    .step h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+
+    .step p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+    .step code {
+      display: inline-block;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 2px 7px;
+      font-size: 12px;
+      font-family: "SF Mono", "Fira Code", Consolas, monospace;
+      color: var(--accent2);
+      margin-top: 4px;
+    }
+
+    .install-cta {
+      text-align: center;
+      padding: 40px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+    }
+
+    .install-cta h3 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .install-cta p { font-size: 14px; color: var(--muted); margin-bottom: 24px; }
+
+    /* ── SCORE PREVIEW ──────────────────── */
+    .preview-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 32px;
+      max-width: 680px;
+      margin: 0 auto;
+    }
+
+    .score-preview {
+      display: flex; align-items: center; gap: 24px;
+      padding: 20px;
+      background: rgba(124,58,237,0.05);
+      border: 1px solid rgba(124,58,237,0.15);
+      border-radius: 14px;
+      margin-bottom: 20px;
+    }
+
+    .score-ring-demo {
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      border: 5px solid rgba(124,58,237,0.15);
+      border-top-color: var(--accent2);
+      border-right-color: var(--accent2);
+      border-bottom-color: var(--accent2);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .score-ring-num { font-size: 20px; font-weight: 800; color: var(--accent2); }
+    .score-meta { flex: 1; }
+    .score-meta-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin-bottom: 4px; }
+    .score-meta-msg { font-size: 14px; color: var(--muted); }
+    .streak-demo {
+      background: rgba(245,158,11,0.1);
+      border: 1px solid rgba(245,158,11,0.2);
+      color: #f59e0b;
+      padding: 4px 12px; border-radius: 99px;
+      font-size: 12px; font-weight: 700;
+    }
+
+    /* ── FOOTER ─────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 40px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 16px;
+    }
+
+    .footer-logo { display: flex; align-items: center; gap: 8px; }
+    .footer-logo-icon {
+      width: 20px; height: 20px;
+      background: linear-gradient(135deg, var(--accent), #d946ef);
+      border-radius: 5px;
+    }
+    .footer-logo-text { font-size: 14px; font-weight: 700; color: var(--text); }
+
+    footer p { font-size: 13px; color: var(--dim); }
+
+    footer a { color: var(--accent2); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 600px) {
+      header { padding: 12px 20px; }
+      .hero { padding: 100px 20px 60px; }
+      .hero-stats { gap: 24px; }
+      footer { flex-direction: column; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── HEADER ─────────────────────────── -->
+  <header>
+    <a class="logo" href="#">
+      <div class="logo-icon"></div>
+      <span class="logo-text">FocusTube</span>
+    </a>
+    <a class="header-cta" href="#install">⬇ Download Free</a>
+  </header>
+
+  <!-- ── HERO ─────────────────────────────── -->
+  <section class="hero">
+    <div class="hero-badge">
+      <span class="hero-badge-dot"></span>
+      Free Chrome Extension &nbsp;·&nbsp; v1.1.0
+    </div>
+
+    <h1>YouTube without<br><span>the distractions</span></h1>
+
+    <p class="hero-sub">
+      Block Shorts, filter clickbait, track your Focus Score, and lock yourself
+      into one video at a time. Take back your attention.
+    </p>
+
+    <div class="hero-btns">
+      <a class="btn-primary" href="#install">
+        ⬇ Download Extension
+      </a>
+      <a class="btn-ghost" href="#features">
+        See Features →
+      </a>
+    </div>
+
+    <div class="hero-stats">
+      <div class="stat">
+        <div class="stat-num">8+</div>
+        <div class="stat-label">Block Modes</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">0ms</div>
+        <div class="stat-label">Tracking / Telemetry</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">100%</div>
+        <div class="stat-label">Free & Open Source</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FEATURES ─────────────────────────── -->
+  <section id="features">
+    <div class="container">
+      <p class="section-label">What it does</p>
+      <h2>Everything that pulls you in — blocked</h2>
+      <p class="section-sub">FocusTube works quietly in the background. No account needed, no data sent anywhere.</p>
+
+      <div class="features-grid">
+
+        <div class="feature-card">
+          <span class="feature-icon">🚫</span>
+          <div class="feature-name">Quick Channel Block</div>
+          <div class="feature-desc">Hover any video card and click 🚫 to instantly block that channel — no typing, no popup.</div>
+          <span class="feature-tag green">New in v1.1</span>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">🔒</span>
+          <div class="feature-name">Video Focus Lock</div>
+          <div class="feature-desc">Lock yourself to a single video for 10, 25, or 50 minutes. Navigating away shows a redirect overlay.</div>
+          <span class="feature-tag green">New in v1.1</span>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">⚡</span>
+          <div class="feature-name">Auto Video Speed</div>
+          <div class="feature-desc">Automatically sets playback to 1.25×, 1.5×, or 2× on every video the moment it loads.</div>
+          <span class="feature-tag">v1.1</span>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">🎯</span>
+          <div class="feature-name">Focus Score + Streak</div>
+          <div class="feature-desc">Earn points for every blocked video and completed focus session. Track your streak across days.</div>
+          <span class="feature-tag">Score System</span>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">🛡️</span>
+          <div class="feature-name">Smart Keyword Filter</div>
+          <div class="feature-desc">Word-boundary matching blocks "prank" without touching "engineering challenges" or "network interactions".</div>
+          <span class="feature-tag">Word-Boundary</span>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">📋</span>
+          <div class="feature-name">Channel Whitelist</div>
+          <div class="feature-desc">Add only the channels you trust (3Blue1Brown, MIT, Kurzgesagt). Everything else disappears from feeds.</div>
+          <span class="feature-tag">v1.1</span>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">🎬</span>
+          <div class="feature-name">Block Shorts & End Cards</div>
+          <div class="feature-desc">Removes Shorts from every page. Also hides the end-screen overlay cards that trap you in rabbit holes.</div>
+          <span class="feature-tag">Always On</span>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">⏱</span>
+          <div class="feature-name">Deep Focus Sessions</div>
+          <div class="feature-desc">Start a 15m, 25m, or 50m Pomodoro-style session. Settings lock until it ends. Score +20 bonus.</div>
+          <span class="feature-tag">Pomodoro</span>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">👁</span>
+          <div class="feature-name">Anti-Clickbait UI</div>
+          <div class="feature-desc">Grayscale thumbnails until you hover over them — removes the emotional hook of attention-grabbing thumbnails.</div>
+          <span class="feature-tag">Optional</span>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── INSTALL ───────────────────────────── -->
+  <section class="install-section" id="install">
+    <div class="container">
+      <p class="section-label">Installation</p>
+      <h2>Up in 60 seconds</h2>
+      <p class="section-sub">No Chrome Web Store account required. Just download, unzip, and load.</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">Step 01</div>
+          <span class="step-icon">⬇</span>
+          <h3>Download the zip</h3>
+          <p>Click the button below and save <code>focustube-v1.1.0.zip</code> anywhere on your computer. Then unzip it — you'll get a folder called <code>focustube-v1.1.0</code>.</p>
+        </div>
+
+        <div class="step">
+          <div class="step-num">Step 02</div>
+          <span class="step-icon">🧩</span>
+          <h3>Open Chrome Extensions</h3>
+          <p>In Chrome, go to <code>chrome://extensions</code> in the address bar. Toggle on <strong style="color:#f4f4f5">Developer mode</strong> (top-right corner).</p>
+        </div>
+
+        <div class="step">
+          <div class="step-num">Step 03</div>
+          <span class="step-icon">📂</span>
+          <h3>Load the folder</h3>
+          <p>Click <strong style="color:#f4f4f5">Load unpacked</strong> and select the unzipped <code>focustube-v1.1.0</code> folder. The extension appears instantly. Pin it to your toolbar.</p>
+        </div>
+      </div>
+
+      <div class="install-cta">
+        <h3>Ready to install?</h3>
+        <p>Free, open source, no sign-up. Works on any Chromium browser (Chrome, Brave, Edge, Arc).</p>
+        <a class="btn-primary" href="focustube-v1.1.0.zip" download>
+          ⬇ &nbsp;Download FocusTube v1.1.0
+        </a>
+        <p style="margin-top:16px; font-size:12px; color:#52525b">
+          ~75 KB &nbsp;·&nbsp; Manifest V3 &nbsp;·&nbsp; No data collected
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── SCORE PREVIEW ─────────────────────── -->
+  <section>
+    <div class="container">
+      <p class="section-label">Focus Score</p>
+      <h2>Know exactly how focused you were</h2>
+      <p class="section-sub">A transparent, non-inflating score that reflects real behavior — not arbitrary points.</p>
+
+      <div class="preview-box">
+        <div class="score-preview">
+          <div class="score-ring-demo">
+            <span class="score-ring-num">82</span>
+          </div>
+          <div class="score-meta">
+            <div class="score-meta-title">Today's Focus Score</div>
+            <div class="score-meta-msg">Excellent focus! 🎯</div>
+          </div>
+          <span class="streak-demo">🔥 7 days</span>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:13px; color:var(--muted);">
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;">
+            <div style="color:var(--text);font-weight:600;margin-bottom:4px;">Base score</div>
+            50 points — every day starts equal
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;">
+            <div style="color:var(--text);font-weight:600;margin-bottom:4px;">+2 per block</div>
+            Max +30 total from blocks today
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;">
+            <div style="color:var(--text);font-weight:600;margin-bottom:4px;">+20 focus session</div>
+            Complete any focus session today
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:14px;">
+            <div style="color:var(--text);font-weight:600;margin-bottom:4px;">Max: 100</div>
+            Cannot inflate. Resets at midnight.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FOOTER ────────────────────────────── -->
+  <footer>
+    <div class="footer-logo">
+      <div class="footer-logo-icon"></div>
+      <span class="footer-logo-text">FocusTube</span>
+    </div>
+    <p>Free & open source · Manifest V3 · No tracking</p>
+    <p>Built for people who want YouTube to work <em>for</em> them.</p>
+  </footer>
+
+</body>
+</html>

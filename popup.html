@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FocusTube – Distraction-Free YouTube</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- ── Header ─────────────────────────────── -->
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon"></div>
+        <h1>FocusTube</h1>
+      </div>
+      <span class="header-version">v1.0.2</span>
+    </header>
+
+    <!-- ── Focus Card (Score + Session) ─────── -->
+    <section class="card focus-card" id="focusPanel">
+
+      <!-- Score Ring + Stats -->
+      <div class="score-section">
+        <!-- SVG Circular Ring -->
+        <div class="score-ring-wrap">
+          <svg class="score-ring" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+            <circle class="ring-track" cx="40" cy="40" r="32"/>
+            <circle class="ring-fill" id="scoreRing" cx="40" cy="40" r="32"
+              stroke-dasharray="201.06" stroke-dashoffset="100.53"/>
+          </svg>
+          <div class="score-ring-inner">
+            <span id="focusScore" class="score-number">50</span>
+            <span class="score-label">Score</span>
+          </div>
+        </div>
+
+        <!-- Right side: streak + message + blocks -->
+        <div class="score-meta">
+          <span id="streakBadge" class="streak-badge">🔥 0 days</span>
+          <span id="scoreMsg" class="score-msg">Keep it up!</span>
+          <div id="blocksPill" class="blocks-pill">
+            <span class="blocks-dot"></span>
+            <span id="blocksCount">0</span> blocked today
+          </div>
+        </div>
+      </div>
+
+      <!-- Score breakdown hint -->
+      <div class="score-hint">
+        Base 50 · +2/block (max +30) · +20 focus session
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Session Info + Timer -->
+      <div class="session-info">
+        <div class="session-header-row">
+          <span class="session-header">Focus Session</span>
+          <span id="sessionActiveBadge" class="session-active-badge" style="display:none">ACTIVE</span>
+        </div>
+        <div id="focusMessage" class="session-msg">Lock settings &amp; block all non-whitelisted videos</div>
+        <div id="focusTimerDisplay" class="focus-timer">25:00</div>
+      </div>
+
+      <!-- Duration Picker -->
+      <div class="duration-picker" id="durationPicker">
+        <button class="dur-btn" data-mins="15">15m</button>
+        <button class="dur-btn active" data-mins="25">25m</button>
+        <button class="dur-btn" data-mins="50">50m</button>
+      </div>
+
+      <button id="startFocusBtn" class="primary-btn">
+        <span class="btn-icon">🎯</span> Start Deep Focus (25m)
+      </button>
+    </section>
+
+    <!-- ── Settings ──────────────────────────── -->
+    <div id="settingsContainer">
+
+      <!-- Core Behavior -->
+      <div class="section-heading">
+        <span class="section-dot"></span>
+        <h2 class="section-title">Core Behavior</h2>
+      </div>
+      <section class="card settings-card">
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Block Shorts</span>
+            <span class="setting-desc">Hide all YouTube Shorts everywhere</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="blockShorts">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Hide Homepage Feed</span>
+            <span class="setting-desc">Remove recommendations from home</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="hideHomepage">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Anti-Clickbait UI</span>
+            <span class="setting-desc">Grayscale thumbnails until hover</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="antiClickbait">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Content Filtering -->
+      <div class="section-heading">
+        <span class="section-dot"></span>
+        <h2 class="section-title">Content Filtering</h2>
+      </div>
+      <section class="card settings-card">
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Filter Entertainment</span>
+            <span class="setting-desc">Block videos matching your keyword list</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="filterEntertainment">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Hide Comments</span>
+            <span class="setting-desc">Remove the comments section entirely</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="hideComments">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Hide Sidebar</span>
+            <span class="setting-desc">Remove suggested videos beside player</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="hideSidebar">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Block End Cards &amp; Info Cards</span>
+            <span class="setting-desc">Hide clickable overlays at end of videos</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="blockEndCards">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Blocklists & Keywords -->
+      <div class="section-heading">
+        <span class="section-dot"></span>
+        <h2 class="section-title">Blocklists &amp; Keywords</h2>
+      </div>
+      <section class="card settings-card advanced-section">
+        <div class="input-group">
+          <label for="blockedChannels">Blocked Channels <span class="badge">Per line</span></label>
+          <textarea id="blockedChannels" placeholder="MrBeast&#10;PewDiePie"></textarea>
+        </div>
+        <div class="input-group">
+          <label for="allowedChannels">Allowed Channels <span class="badge accent-badge">Whitelist only</span></label>
+          <textarea id="allowedChannels" placeholder="3Blue1Brown&#10;MIT OpenCourseWare&#10;Kurzgesagt"></textarea>
+        </div>
+        <div class="input-group">
+          <label for="blockedKeywords">Blocked Keywords <span class="badge">Per line</span></label>
+          <textarea id="blockedKeywords" placeholder="funny&#10;prank&#10;vlog"></textarea>
+        </div>
+        <div class="input-group" style="border-bottom:none">
+          <label for="allowedKeywords">Allowed Keywords <span class="badge accent-badge">Overrides blocks</span></label>
+          <textarea id="allowedKeywords" placeholder="tutorial&#10;math&#10;lecture"></textarea>
+        </div>
+      </section>
+
+      <!-- Playback -->
+      <div class="section-heading">
+        <span class="section-dot"></span>
+        <h2 class="section-title">Playback</h2>
+      </div>
+      <section class="card settings-card">
+        <div class="setting-row" style="border-bottom:none; flex-direction:column; align-items:flex-start; gap:10px; padding-bottom:16px">
+          <div class="setting-info" style="padding-right:0">
+            <span class="setting-name">Auto Video Speed</span>
+            <span class="setting-desc">Set playback rate automatically when a video loads</span>
+          </div>
+          <div class="speed-picker" id="speedPicker">
+            <button class="speed-btn active" data-speed="1">1&times;</button>
+            <button class="speed-btn" data-speed="1.25">1.25&times;</button>
+            <button class="speed-btn" data-speed="1.5">1.5&times;</button>
+            <button class="speed-btn" data-speed="2">2&times;</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Developer -->
+      <div class="section-heading">
+        <span class="section-dot"></span>
+        <h2 class="section-title">Developer</h2>
+      </div>
+      <section class="card settings-card">
+        <div class="setting-row" style="border-bottom:none">
+          <div class="setting-info">
+            <span class="setting-name">Debug Mode</span>
+            <span class="setting-desc">Log filtering decisions to console</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="debugMode">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </section>
+
+    </div><!-- /settingsContainer -->
+
+    <!-- Scroll fade -->
+    <div class="scroll-fade"></div>
+  </div><!-- /app-container -->
+
+  <!-- Settings saved toast -->
+  <div class="status-msg" id="statusMsg">
+    <div class="status-icon">✓</div>
+    <span>Settings saved</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

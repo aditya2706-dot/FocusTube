@@ -1,0 +1,784 @@
+/**
+ * FocusTube v1.0.1 - Production Content Script
+ * Handles DOM manipulation with high performance, robust selectors, and smart filtering.
+ *
+ * Bug fixes in this version:
+ * - Fixed: processedKey cache not cleared on SPA navigation (keyword filter stopped working)
+ * - Fixed: Channel name extraction with lazy-loading retry
+ * - Fixed: Active video blocker now uses a dedicated MutationObserver on the title element
+ * - Fixed: Duplicate event listener registration via _listenersAttached guard
+ * - Fixed: Shorts overlay now mutes/stops audio on block
+ * - Fixed: Null guard on block overlay button
+ * - Fixed: isFocusSessionActive synced on every storage change event
+ */
+
+class Logger {
+    constructor(enabled) {
+        this.enabled = enabled;
+        this.prefix = '[FocusTube]';
+    }
+
+    log(...args) {
+        if (this.enabled) console.log(this.prefix, ...args);
+    }
+
+    warn(...args) {
+        if (this.enabled) console.warn(this.prefix, ...args);
+    }
+
+    error(...args) {
+        if (this.enabled) console.error(this.prefix, ...args);
+    }
+}
+
+class FocusTube {
+    constructor() {
+        this.settings = {
+            blockShorts: true,
+            hideHomepage: true,
+            filterEntertainment: true,
+            hideComments: false,
+            hideSidebar: false,
+            antiClickbait: false,
+            blockEndCards: true,          // NEW: hide end-screen overlay cards
+            blockedChannels: '',
+            allowedChannels: '',          // NEW: channel whitelist (only show these)
+            blockedKeywords: 'prank\nvlog\nroast\nchallenge\ncomedy\ngossip\ndrama',
+            allowedKeywords: '',
+            autoSpeed: '1',               // NEW: auto playback speed ("1", "1.25", "1.5", "2")
+            debugMode: false,
+            isFocusSessionActive: false
+        };
+
+        this.lists = {
+            blockedChannels: [],
+            allowedChannels: [],     // NEW
+            blockedKeywords: [],
+            allowedKeywords: []
+        };
+
+        this.logger = new Logger(false);
+        this.observer = null;
+        this.processTimeout = null;
+        this._listenersAttached = false;
+        this._videoObserver = null;
+        this._pendingBlocks = 0;   // Batched block count sent every 5s
+
+        // Robust selector arrays covering multiple YouTube DOM variants
+        this.selectors = {
+            videoContainers: [
+                'ytd-rich-item-renderer',
+                'ytd-video-renderer',
+                'ytd-compact-video-renderer',
+                'ytd-grid-video-renderer',
+                'ytd-reel-item-renderer',
+                'ytd-playlist-video-renderer'
+            ],
+            titleElements: [
+                '#video-title',
+                '#video-title-link',
+                'a#video-title',
+                'span#video-title',
+                '.title-and-badge yt-formatted-string',
+                'h3.ytd-rich-grid-media a#video-title'
+            ],
+            channelElements: [
+                'ytd-channel-name a.yt-simple-endpoint',
+                'ytd-channel-name .yt-simple-endpoint',
+                'ytd-channel-name yt-formatted-string',
+                'a.ytd-video-renderer[href^="/@"]',
+                'a.ytd-video-renderer[href^="/channel"]',
+                '#channel-name a',
+                '#owner-sub-count + div a'
+            ],
+            thumbnailLinks: [
+                'a#thumbnail',
+                'a.ytd-thumbnail',
+                'a.ytd-reel-item-renderer'
+            ],
+            watchTitle: [
+                'h1.ytd-watch-metadata yt-formatted-string',
+                'h1.title yt-formatted-string',
+                '#above-the-fold #title h1 yt-formatted-string'
+            ],
+            watchChannel: [
+                'ytd-video-owner-renderer ytd-channel-name a',
+                '#owner #upload-info ytd-channel-name a',
+                '#owner-name a',
+                'ytd-video-owner-renderer .ytd-channel-name a'
+            ]
+        };
+    }
+
+    async init() {
+        await this.loadSettings();
+        this.setupEventListeners();
+        this.applyStaticStyles();
+        this.startObserver();
+        this.processDOM();
+        this.setupWatchPagePoller();
+        this.startBlockFlusher();
+        this.injectVideoLockUI();   // Inject lock widget if on /watch
+        this.checkVideoLock();      // Apply lock state if one is active
+        this.logger.log('Initialization complete. v1.1.0');
+    }
+
+    async loadSettings() {
+        return new Promise(resolve => {
+            chrome.storage.sync.get(this.settings, (items) => {
+                this.settings = { ...this.settings, ...items };
+                this.logger.enabled = items.debugMode;
+
+                // Parse lists
+                this.lists.blockedChannels = this.parseList(items.blockedChannels);
+                this.lists.allowedChannels = this.parseList(items.allowedChannels); // NEW
+                this.lists.blockedKeywords = this.parseList(items.blockedKeywords);
+                this.lists.allowedKeywords = this.parseList(items.allowedKeywords);
+
+                resolve();
+            });
+        });
+    }
+
+    parseList(text) {
+        if (!text) return [];
+        return text.split('\n')
+            .map(item => item.trim().toLowerCase())
+            .filter(item => item.length > 0);
+    }
+
+    /**
+     * Flush batched block counts to background every 5s.
+     * Only runs once — guarded against multiple init calls.
+     */
+    startBlockFlusher() {
+        if (this._flushInterval) return;
+        this._flushInterval = setInterval(() => {
+            if (this._pendingBlocks > 0) {
+                const count = this._pendingBlocks;
+                this._pendingBlocks = 0;
+                try {
+                    chrome.runtime.sendMessage({ action: 'incrementBlocks', count });
+                } catch (e) { /* extension context invalidated — ignore */ }
+            }
+        }, 5000);
+    }
+
+    setupEventListeners() {
+        // FIX #8: Guard prevents duplicate listeners on re-init calls
+        if (this._listenersAttached) return;
+        this._listenersAttached = true;
+
+        // FIX #6 + #1: On any sync storage change, re-load ALL settings and
+        // clear processed keys so filtering decisions are re-evaluated fresh.
+        chrome.storage.onChanged.addListener((changes, namespace) => {
+            if (namespace === 'sync') {
+                this.logger.log('Settings changed, reloading...');
+                this.loadSettings().then(() => {
+                    // Clear all cached processing decisions
+                    document.querySelectorAll('[data-ft-processed-key]').forEach(el => {
+                        delete el.dataset.ftProcessedKey;
+                        el.style.display = '';
+                    });
+                    this.applyStaticStyles();
+                    this.processDOM();
+                });
+            }
+        });
+
+        // FIX #1: Clear processed keys on every SPA navigation so new page
+        // results are evaluated from scratch
+        window.addEventListener('yt-navigate-start', () => {
+            document.querySelectorAll('[data-ft-processed-key]').forEach(el => {
+                delete el.dataset.ftProcessedKey;
+            });
+            this.removeFullPageBlock();
+            this.applyStaticStyles();
+        });
+
+        window.addEventListener('yt-navigate-finish', () => {
+            setTimeout(() => {
+                this.applyStaticStyles();
+                this.processDOM();
+                this.setupWatchPagePoller();
+                this.checkVideoLock();         // Check lock on every navigation
+                this.injectVideoLockUI();      // Re-inject lock widget on watch pages
+            }, 300);
+        });
+    }
+
+    applyStaticStyles() {
+        try {
+            let styleEl = document.getElementById('focustube-style');
+            if (!styleEl) {
+                styleEl = document.createElement('style');
+                styleEl.id = 'focustube-style';
+                (document.head || document.documentElement).appendChild(styleEl);
+            }
+
+            let css = '';
+
+            if (this.settings.hideComments) {
+                css += `ytd-comments { display: none !important; }\n`;
+            }
+
+            if (this.settings.hideSidebar) {
+                css += `#secondary { display: none !important; }\n`;
+                css += `ytd-watch-next-secondary-results-renderer { display: none !important; }\n`;
+            }
+
+            if (this.settings.blockShorts) {
+                // CSS-level shorts blocking covers shelves and navigation entries
+                css += `ytd-rich-shelf-renderer[is-shorts] { display: none !important; }\n`;
+                css += `ytd-reel-shelf-renderer { display: none !important; }\n`;
+                css += `ytd-mini-guide-entry-renderer[aria-label="Shorts"] { display: none !important; }\n`;
+                css += `ytd-guide-entry-renderer:has(a[title="Shorts"]) { display: none !important; }\n`;
+                // Also hide shorts chips/tab
+                css += `yt-chip-cloud-chip-renderer:has([title="Shorts"]) { display: none !important; }\n`;
+            }
+
+            if ((this.settings.hideHomepage || this.settings.isFocusSessionActive) && window.location.pathname === '/') {
+                css += `ytd-rich-grid-renderer { display: none !important; }\n`;
+                this.injectHomepageMessage();
+            } else if (window.location.pathname === '/') {
+                this.removeHomepageMessage();
+            }
+
+            if (this.settings.antiClickbait) {
+                css += `
+                    ytd-thumbnail img, .ytd-thumbnail img, .ytd-reel-item-renderer img {
+                        filter: grayscale(1) opacity(0.8) !important;
+                        transition: filter 0.3s, opacity 0.3s !important;
+                    }
+                    ytd-thumbnail:hover img, .ytd-thumbnail:hover img, .ytd-reel-item-renderer:hover img {
+                        filter: none !important;
+                        opacity: 1 !important;
+                    }
+                `;
+            }
+
+            if (this.settings.blockEndCards) {
+                // Hide YouTube's end-screen overlay and suggestions card
+                css += `.ytp-endscreen-element, ytd-endscreen-renderer { display: none !important; }\n`;
+                css += `.ytp-cards-teaser, .ytp-cards-button, .ytp-ce-element { display: none !important; }\n`;
+                css += `.ytp-cards-header { display: none !important; }\n`;
+            }
+
+            // ── Quick Block Button (appears on hover of every video card) ───────
+            css += `
+                [data-ft-has-btn] { position: relative !important; }
+                .ft-block-btn {
+                    position: absolute;
+                    top: 6px; right: 6px;
+                    z-index: 9990;
+                    background: rgba(10,10,10,0.72);
+                    backdrop-filter: blur(6px);
+                    color: #fff;
+                    border: 1px solid rgba(255,255,255,0.15);
+                    border-radius: 50%;
+                    width: 30px; height: 30px;
+                    font-size: 14px;
+                    cursor: pointer;
+                    display: none;
+                    align-items: center;
+                    justify-content: center;
+                    transition: background 0.15s, transform 0.15s;
+                    line-height: 1;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+                }
+                [data-ft-has-btn]:hover .ft-block-btn { display: flex !important; }
+                .ft-block-btn:hover { background: rgba(239,68,68,0.88) !important; transform: scale(1.1); }
+                .ft-block-toast {
+                    position: fixed;
+                    bottom: 24px; left: 50%;
+                    transform: translateX(-50%) translateY(80px);
+                    background: #ef4444;
+                    color: #fff;
+                    padding: 8px 18px;
+                    border-radius: 99px;
+                    font-size: 13px; font-weight: 600;
+                    z-index: 2147483640;
+                    opacity: 0;
+                    transition: all 0.35s cubic-bezier(0.34,1.56,0.64,1);
+                    pointer-events: none;
+                }
+                .ft-block-toast.show {
+                    transform: translateX(-50%) translateY(0);
+                    opacity: 1;
+                }
+            `;
+
+            // ── Video Focus Lock Widget ──────────────────────────────────────────
+            css += `
+                #ft-video-lock {
+                    position: fixed;
+                    bottom: 76px; right: 18px;
+                    z-index: 2147483646;
+                    background: rgba(14,14,16,0.93);
+                    backdrop-filter: blur(14px);
+                    border: 1px solid rgba(124,58,237,0.35);
+                    border-radius: 14px;
+                    padding: 12px 14px;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    display: flex; flex-direction: column; gap: 9px;
+                    min-width: 190px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+                    user-select: none;
+                }
+                #ft-video-lock .ft-lk-title {
+                    font-size: 11px; font-weight: 700;
+                    text-transform: uppercase; letter-spacing: 0.06em;
+                    color: #8b5cf6; display: flex; align-items: center; gap: 5px;
+                }
+                #ft-video-lock .ft-lk-durs {
+                    display: flex; gap: 5px;
+                }
+                #ft-video-lock .ft-lk-dur {
+                    flex: 1; padding: 5px 0;
+                    border: 1px solid rgba(255,255,255,0.08);
+                    border-radius: 7px;
+                    background: transparent; color: #9ca3af;
+                    font-size: 12px; font-weight: 600;
+                    cursor: pointer; transition: all 0.15s;
+                }
+                #ft-video-lock .ft-lk-dur:hover { color: #f4f4f5; background: rgba(255,255,255,0.05); }
+                #ft-video-lock .ft-lk-dur.active {
+                    background: rgba(124,58,237,0.18);
+                    border-color: rgba(124,58,237,0.4);
+                    color: #a78bfa;
+                }
+                #ft-video-lock .ft-lk-start {
+                    background: #7c3aed; color: #fff;
+                    border: none; border-radius: 8px;
+                    padding: 9px 12px;
+                    font-size: 12px; font-weight: 600;
+                    cursor: pointer; transition: background 0.15s;
+                    display: flex; align-items: center; justify-content: center; gap: 5px;
+                }
+                #ft-video-lock .ft-lk-start:hover { background: #8b5cf6; }
+                #ft-video-lock .ft-lk-timer {
+                    font-size: 26px; font-weight: 800;
+                    color: #a78bfa; text-align: center;
+                    font-variant-numeric: tabular-nums;
+                    letter-spacing: -0.02em;
+                    text-shadow: 0 0 20px rgba(124,58,237,0.5);
+                    display: none;
+                }
+                #ft-video-lock .ft-lk-end {
+                    background: transparent;
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 7px; color: #6b7280;
+                    padding: 6px; font-size: 11px; font-weight: 600;
+                    cursor: pointer; transition: all 0.15s; display: none;
+                }
+                #ft-video-lock .ft-lk-end:hover { color: #ef4444; border-color: rgba(239,68,68,0.3); }
+            `;
+
+            styleEl.textContent = css;
+        } catch (e) {
+            this.logger.error('Error applying static styles:', e);
+        }
+    }
+
+    injectHomepageMessage() {
+        // Avoid duplicate injection
+        if (document.getElementById('focustube-homepage-msg')) return;
+
+        const msgContainer = document.createElement('div');
+        msgContainer.id = 'focustube-homepage-msg';
+        msgContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 50vh;
+            color: #aaaaaa;
+            font-family: 'YouTube Noto', Roboto, Arial, sans-serif;
+            text-align: center;
+            margin-top: 50px;
+            width: 100%;
+            pointer-events: none;
+        `;
+
+        const icon = this.settings.isFocusSessionActive ? '🔒' : '🎯';
+        const msg = this.settings.isFocusSessionActive
+            ? 'Focus Session Active.<br>Only whitelisted content allowed.'
+            : 'Stay focused.<br>Use Search to find what you need.';
+
+        msgContainer.innerHTML = `
+            <div style="font-size: 48px; margin-bottom: 16px;">${icon}</div>
+            <div style="font-size: 18px; line-height: 1.6;">${msg}</div>
+        `;
+
+        const tryInsert = () => {
+            const primary = document.querySelector(
+                '#page-manager > ytd-browse[page-subtype="home"] #primary, ytd-browse[page-subtype="home"] #primary'
+            );
+            if (primary && !document.getElementById('focustube-homepage-msg')) {
+                primary.prepend(msgContainer);
+            }
+        };
+
+        tryInsert();
+        setTimeout(tryInsert, 800);
+        setTimeout(tryInsert, 2500);
+    }
+
+    removeHomepageMessage() {
+        const el = document.getElementById('focustube-homepage-msg');
+        if (el) el.remove();
+    }
+
+    /**
+     * FIX #2: Multi-selector text extractor with title attribute fallback.
+     * Returns the first non-empty string found across the selector array.
+     */
+    extractElementText(parent, selectorArray) {
+        for (const selector of selectorArray) {
+            try {
+                const el = parent.querySelector(selector);
+                if (el) {
+                    const text = (el.title || el.getAttribute('aria-label') || el.innerText || el.textContent || '').trim();
+                    if (text) return text;
+                }
+            } catch (_) { /* invalid selector — skip */ }
+        }
+        return '';
+    }
+
+    extractLinkHref(parent, selectorArray) {
+        for (const selector of selectorArray) {
+            try {
+                const el = parent.querySelector(selector);
+                if (el) {
+                    const href = el.getAttribute('href');
+                    if (href) return href;
+                }
+            } catch (_) { /* invalid selector — skip */ }
+        }
+        return '';
+    }
+
+    /**
+     * Escape special regex characters in a user-supplied string.
+     */
+    escapeRegex(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    /**
+     * Word-boundary keyword match.
+     * "reaction" matches "reaction video" but NOT "interactions" or "reactions".
+     * Uses \b so it works on whole words only.
+     */
+    matchesKeyword(text, keyword) {
+        if (!text || !keyword) return false;
+        try {
+            const pattern = new RegExp(`\\b${this.escapeRegex(keyword)}\\b`, 'i');
+            return pattern.test(text);
+        } catch (_) {
+            // Fallback to includes() if regex is somehow invalid
+            return text.toLowerCase().includes(keyword.toLowerCase());
+        }
+    }
+
+
+    shouldBlockVideo(title, channelName, isShortLink) {
+        const lowerTitle   = (title || '').toLowerCase();
+        const lowerChannel = (channelName || '').toLowerCase();
+
+        // 1. Channel whitelist (allowedChannels) — if list is non-empty, only
+        //    show videos from channels in the list; hide everything else.
+        //    Does NOT apply on /watch pages (user is already watching that video).
+        if (this.lists.allowedChannels.length > 0 && window.location.pathname !== '/watch') {
+            if (!lowerChannel) return false; // Can't decide yet — don't hide prematurely
+            let channelAllowed = false;
+            for (const ac of this.lists.allowedChannels) {
+                if (lowerChannel.includes(ac)) {
+                    channelAllowed = true;
+                    break;
+                }
+            }
+            if (!channelAllowed) {
+                this.logger.log(`Blocked (Channel not in whitelist): "${channelName}"`);
+                return true;
+            }
+        }
+
+        // 2. Keyword whitelist — overrides block rules.
+        //    Uses plain includes() so "networking" matches "computer networking tutorial".
+        if (this.lists.allowedKeywords.length > 0) {
+            for (const keyword of this.lists.allowedKeywords) {
+                if (
+                    (lowerTitle   && lowerTitle.includes(keyword)) ||
+                    (lowerChannel && lowerChannel.includes(keyword))
+                ) {
+                    this.logger.log(`Allowed (Whitelist): "${title}"`);
+                    return false;
+                }
+            }
+        }
+
+        // 2. STRICT MODE (Focus Session active) — block everything not whitelisted
+        if (this.settings.isFocusSessionActive) {
+            this.logger.log(`Blocked (Strict Mode): "${title}"`);
+            return true;
+        }
+
+        // 3. Shorts check
+        if (this.settings.blockShorts && isShortLink) {
+            this.logger.log(`Blocked (Short): "${title || isShortLink}"`);
+            return true;
+        }
+
+        // 4. Channel blocklist — uses plain includes() so partial names work.
+        //    e.g. "beast" blocks "MrBeast Gaming".
+        if (this.lists.blockedChannels.length > 0 && lowerChannel) {
+            for (const bChannel of this.lists.blockedChannels) {
+                if (lowerChannel.includes(bChannel)) {
+                    this.logger.log(`Blocked (Channel "${bChannel}"): "${channelName}"`);
+                    return true;
+                }
+            }
+        }
+
+        // 5. Keyword blocklist — uses WORD BOUNDARY matching to prevent false
+        //    positives. "reaction" will NOT match "interactions", "characters",
+        //    or "reactions" (plural ends with 's', outside the boundary).
+        if (this.settings.filterEntertainment && lowerTitle && this.lists.blockedKeywords.length > 0) {
+            for (const keyword of this.lists.blockedKeywords) {
+                if (this.matchesKeyword(lowerTitle, keyword)) {
+                    this.logger.log(`Blocked (Keyword "${keyword}"): "${title}"`);
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * NEW: Apply auto playback speed when a video element is available.
+     * Retries for up to 5 seconds to handle YouTube's lazy video injection.
+     */
+    applyAutoSpeed() {
+        const speed = parseFloat(this.settings.autoSpeed || '1');
+        if (speed === 1) return; // Default — no action needed
+
+        const trySet = (attemptsLeft) => {
+            const video = document.querySelector('video');
+            if (video && video.readyState >= 1) {
+                video.playbackRate = speed;
+                this.logger.log(`Auto speed set to ${speed}x`);
+
+                // Re-apply if YouTube resets it (e.g. on ad skip)
+                video.addEventListener('ratechange', () => {
+                    if (video.playbackRate !== speed && !video.paused) {
+                        video.playbackRate = speed;
+                    }
+                }, { once: false });
+            } else if (attemptsLeft > 0) {
+                setTimeout(() => trySet(attemptsLeft - 1), 500);
+            }
+        };
+
+        trySet(10); // Up to 5s of retries (10 × 500ms)
+    }
+
+
+    /**
+     * FIX #3: Dedicated watch-page poller using MutationObserver on the
+     * metadata section so we catch the title as soon as YouTube renders it,
+     * even if it loads asynchronously after navigation.
+     */
+    setupWatchPagePoller() {
+        // Disconnect any previous watch observer
+        if (this._videoObserver) {
+            this._videoObserver.disconnect();
+            this._videoObserver = null;
+        }
+
+        if (window.location.pathname !== '/watch' && !window.location.pathname.startsWith('/shorts/')) {
+            this.removeFullPageBlock();
+            return;
+        }
+
+        // Immediately check shorts
+        if (this.settings.blockShorts && window.location.pathname.startsWith('/shorts/')) {
+            this.showFullPageBlock('Shorts are disabled. 🛡️');
+            return;
+        }
+
+        // Apply auto speed on /watch pages
+        this.applyAutoSpeed();
+
+
+        // For /watch pages: observe the metadata area for the title to appear
+        const checkNow = () => {
+            const title = this.extractElementText(document, this.selectors.watchTitle);
+            const channel = this.extractElementText(document, this.selectors.watchChannel);
+
+            if (title) {
+                if (this.shouldBlockVideo(title, channel, false)) {
+                    this.showFullPageBlock('This video matches your distraction filters.');
+                } else {
+                    this.removeFullPageBlock();
+                }
+                // We got a result — disconnect the observer
+                if (this._videoObserver) {
+                    this._videoObserver.disconnect();
+                    this._videoObserver = null;
+                }
+            }
+        };
+
+        // Run immediately in case metadata already loaded
+        checkNow();
+
+        // Also observe the document for DOM changes until we get the title
+        this._videoObserver = new MutationObserver(checkNow);
+        const metaTarget = document.querySelector('#columns, #below, ytd-watch-metadata') || document.body;
+        this._videoObserver.observe(metaTarget, { childList: true, subtree: true });
+
+        // Safety: stop the observer after 8 seconds regardless
+        setTimeout(() => {
+            if (this._videoObserver) {
+                this._videoObserver.disconnect();
+                this._videoObserver = null;
+            }
+        }, 8000);
+    }
+
+    /**
+     * FIX #12: Shorts block now stops all loading and silences audio.
+     * FIX #13: Null guard on the button reference.
+     */
+    showFullPageBlock(message) {
+        if (document.getElementById('focustube-video-block')) return;
+
+        // Stop all media playback and network loading
+        document.querySelectorAll('video').forEach(v => {
+            v.pause();
+            v.muted = true;
+            v.src = '';
+        });
+
+        const overlay = document.createElement('div');
+        overlay.id = 'focustube-video-block';
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #111113;
+            z-index: 2147483647;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #ffffff;
+            font-family: 'Inter', Roboto, Arial, sans-serif;
+            text-align: center;
+            padding: 24px;
+        `;
+        overlay.innerHTML = `
+            <div style="font-size: 64px; margin-bottom: 24px;">🛡️</div>
+            <h1 style="font-size: 28px; font-weight: 700; margin: 0 0 12px;">Content Blocked</h1>
+            <p style="font-size: 16px; color: #9ca3af; margin: 0 0 32px; max-width: 420px; line-height: 1.6;">${message}</p>
+            <button id="ft-back-btn" style="
+                background: #7c3aed; color: white; border: none;
+                padding: 14px 32px; border-radius: 8px; font-size: 15px; font-weight: 600;
+                cursor: pointer; transition: background 0.2s;
+            ">← Go to Homepage</button>
+        `;
+
+        document.body.appendChild(overlay);
+
+        // FIX #13: Null guard before accessing btn properties
+        const btn = document.getElementById('ft-back-btn');
+        if (btn) {
+            btn.onmouseover = () => { btn.style.background = '#8b5cf6'; };
+            btn.onmouseout  = () => { btn.style.background = '#7c3aed'; };
+            btn.onclick     = () => { window.location.href = 'https://www.youtube.com/'; };
+        }
+    }
+
+    removeFullPageBlock() {
+        const overlay = document.getElementById('focustube-video-block');
+        if (overlay) overlay.remove();
+    }
+
+    processDOM() {
+        try {
+            this.applyStaticStyles();
+
+            const selector = this.selectors.videoContainers.join(', ');
+            const videoElements = document.querySelectorAll(selector);
+
+            videoElements.forEach(el => {
+                const title = this.extractElementText(el, this.selectors.titleElements);
+                const channelName = this.extractElementText(el, this.selectors.channelElements);
+                const href = this.extractLinkHref(el, this.selectors.thumbnailLinks);
+                const isShortLink = !!(href && href.includes('/shorts/'));
+
+                // Skip elements still loading (no data at all yet)
+                if (!title && !channelName && !isShortLink) return;
+
+                // Build a state key — if unchanged, skip re-processing
+                const stateKey = `${title}||${channelName}||${this.settings.isFocusSessionActive}||${this.settings.filterEntertainment}`;
+                if (el.dataset.ftProcessedKey === stateKey) return;
+
+                // Skip elements inside a completely hidden homepage grid
+                if (
+                    window.location.pathname === '/' &&
+                    (this.settings.hideHomepage || this.settings.isFocusSessionActive) &&
+                    el.closest('ytd-rich-grid-renderer')
+                ) {
+                    el.dataset.ftProcessedKey = stateKey;
+                    return;
+                }
+
+                if (this.shouldBlockVideo(title, channelName, isShortLink)) {
+                    if (el.dataset.ftHidden !== 'true') this._pendingBlocks++;
+                    el.style.display = 'none';
+                    el.dataset.ftHidden = 'true';
+                } else {
+                    el.style.display = '';
+                    el.dataset.ftHidden = 'false';
+                    // Inject the quick-block button on visible cards
+                    this.injectQuickBlockButton(el, channelName);
+                }
+
+                el.dataset.ftProcessedKey = stateKey;
+            });
+        } catch (e) {
+            this.logger.error('processDOM error:', e);
+        }
+    }
+
+    startObserver() {
+        if (this.observer) this.observer.disconnect();
+
+        // FIX #7: Guard for document.body not existing
+        const target = document.body || document.documentElement;
+
+        this.observer = new MutationObserver((mutations) => {
+            let shouldProcess = false;
+            for (const mutation of mutations) {
+                if (mutation.addedNodes.length > 0) {
+                    shouldProcess = true;
+                    break;
+                }
+            }
+            if (shouldProcess) {
+                if (this.processTimeout) cancelAnimationFrame(this.processTimeout);
+                this.processTimeout = requestAnimationFrame(() => this.processDOM());
+            }
+        });
+
+        this.observer.observe(target, { childList: true, subtree: true });
+        this.logger.log('MutationObserver started.');
+    }
+}
+
+// Initialize
+const ft = new FocusTube();
+ft.init();
