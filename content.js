@@ -519,9 +519,11 @@ class FocusTube {
             }
         }
 
-        // 2. STRICT MODE (Focus Session active) — block everything not whitelisted
-        if (this.settings.isFocusSessionActive) {
-            this.logger.log(`Blocked (Strict Mode): "${title}"`);
+        // 3. STRICT MODE (Focus Session active) — block everything not whitelisted
+        //    EXCEPTION: never block /watch pages. The user chose a specific video
+        //    to watch — Focus Mode prevents BROWSING feeds, not watching a video.
+        if (this.settings.isFocusSessionActive && window.location.pathname !== '/watch') {
+            this.logger.log(`Blocked (Strict Mode / feed): "${title}"`);
             return true;
         }
 

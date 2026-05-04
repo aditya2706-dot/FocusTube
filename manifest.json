@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FocusTube",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Block YouTube Shorts, filter distracting content by keyword & channel, and lock in with a Focus Session timer.",
   "permissions": [
     "storage"
