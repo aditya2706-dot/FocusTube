@@ -1,5 +1,5 @@
 /**
- * FocusTube v1.2.0 - Background Service Worker
+ * FocusTube v1.2.1 - Background Service Worker
  * Manages Focus Session timer + lightweight daily score/streak tracking.
  *
  * Score formula (simple & reliable):

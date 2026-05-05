@@ -1,5 +1,5 @@
 /**
- * FocusTube v1.2.0 - Production Content Script
+ * FocusTube v1.2.1 - Production Content Script
  * Handles DOM manipulation with high performance, robust selectors, and smart filtering.
  *
  * Bug fixes in this version:
@@ -120,7 +120,7 @@ class FocusTube {
         this.startBlockFlusher();
         this.injectVideoLockUI();   // Inject lock widget if on /watch
         this.checkVideoLock();      // Apply lock state if one is active
-        this.logger.log('Initialization complete. v1.1.0');
+        this.logger.log('Initialization complete. v1.2.1');
     }
 
     async loadSettings() {
@@ -264,70 +264,163 @@ class FocusTube {
                 css += `.ytp-cards-header { display: none !important; }\n`;
             }
 
-            // ── Video Focus Lock Widget ──────────────────────────────────────────
+            // ── Video Focus Lock: FAB + Panel ────────────────────────────────────
             css += `
-                #ft-video-lock {
+                /* ── Floating Action Button (collapsed state) ── */
+                #ft-lock-fab {
                     position: fixed;
-                    bottom: 76px; right: 18px;
+                    bottom: 80px; right: 20px;
                     z-index: 2147483646;
-                    background: rgba(14,14,16,0.93);
-                    backdrop-filter: blur(14px);
-                    border: 1px solid rgba(124,58,237,0.35);
-                    border-radius: 14px;
-                    padding: 12px 14px;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    display: flex; flex-direction: column; gap: 9px;
-                    min-width: 190px;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+                    width: 52px; height: 52px;
+                    border-radius: 50%;
+                    background: linear-gradient(135deg,#7c3aed,#a855f7);
+                    box-shadow: 0 4px 20px rgba(124,58,237,0.55);
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 22px; cursor: pointer;
+                    border: none; color: #fff;
+                    transition: transform 0.2s, box-shadow 0.2s;
                     user-select: none;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 }
-                #ft-video-lock .ft-lk-title {
+                #ft-lock-fab:hover { transform: scale(1.1); box-shadow: 0 6px 28px rgba(124,58,237,0.7); }
+                #ft-lock-fab.active-lock { background: linear-gradient(135deg,#ef4444,#f97316); }
+
+                /* ── Expanded Panel ── */
+                #ft-lock-panel {
+                    position: fixed;
+                    bottom: 142px; right: 20px;
+                    z-index: 2147483645;
+                    background: rgba(12,12,16,0.96);
+                    backdrop-filter: blur(20px);
+                    -webkit-backdrop-filter: blur(20px);
+                    border: 1px solid rgba(124,58,237,0.3);
+                    border-radius: 18px;
+                    padding: 0;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    width: 240px;
+                    box-shadow: 0 16px 48px rgba(0,0,0,0.65);
+                    user-select: none;
+                    display: none;
+                    flex-direction: column;
+                    overflow: hidden;
+                }
+                #ft-lock-panel.visible { display: flex; animation: ftPanelIn 0.25s cubic-bezier(0.34,1.56,0.64,1); }
+                @keyframes ftPanelIn {
+                    from { opacity:0; transform: scale(0.85) translateY(10px); }
+                    to   { opacity:1; transform: scale(1)    translateY(0); }
+                }
+
+                /* Panel header (drag handle) */
+                #ft-lock-panel .ft-lk-header {
+                    display: flex; align-items: center; justify-content: space-between;
+                    padding: 12px 14px 10px;
+                    cursor: grab;
+                    border-bottom: 1px solid rgba(255,255,255,0.06);
+                }
+                #ft-lock-panel .ft-lk-header:active { cursor: grabbing; }
+                #ft-lock-panel .ft-lk-title {
                     font-size: 11px; font-weight: 700;
-                    text-transform: uppercase; letter-spacing: 0.06em;
-                    color: #8b5cf6; display: flex; align-items: center; gap: 5px;
+                    text-transform: uppercase; letter-spacing: 0.07em;
+                    color: #a78bfa; display: flex; align-items: center; gap: 5px;
                 }
-                #ft-video-lock .ft-lk-durs {
-                    display: flex; gap: 5px;
+                #ft-lock-panel .ft-lk-close {
+                    background: none; border: none; color: #52525b;
+                    font-size: 16px; cursor: pointer; padding: 0; line-height: 1;
+                    transition: color 0.15s;
                 }
-                #ft-video-lock .ft-lk-dur {
+                #ft-lock-panel .ft-lk-close:hover { color: #a1a1aa; }
+
+                /* Panel body */
+                #ft-lock-panel .ft-lk-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+                /* SVG ring */
+                .ft-ring-wrap {
+                    display: flex; align-items: center; justify-content: center;
+                    position: relative; width: 110px; height: 110px; margin: 0 auto;
+                }
+                .ft-ring-bg { fill: none; stroke: rgba(124,58,237,0.12); stroke-width: 7; }
+                .ft-ring-prog {
+                    fill: none; stroke: #a78bfa; stroke-width: 7;
+                    stroke-linecap: round;
+                    stroke-dasharray: 283;
+                    stroke-dashoffset: 0;
+                    transform: rotate(-90deg); transform-origin: 50% 50%;
+                    transition: stroke-dashoffset 1s linear, stroke 0.5s;
+                }
+                .ft-ring-prog.ending { stroke: #ef4444; }
+                .ft-ring-time {
+                    position: absolute; inset: 0;
+                    display: flex; flex-direction: column;
+                    align-items: center; justify-content: center;
+                    font-variant-numeric: tabular-nums;
+                }
+                .ft-ring-time span {
+                    font-size: 22px; font-weight: 800;
+                    color: #f4f4f5; letter-spacing: -0.02em;
+                    line-height: 1;
+                }
+                .ft-ring-time small {
+                    font-size: 9px; font-weight: 600;
+                    text-transform: uppercase; letter-spacing: 0.08em;
+                    color: #52525b; margin-top: 2px;
+                }
+
+                /* Preset buttons */
+                .ft-lk-presets { display: flex; gap: 5px; }
+                .ft-lk-preset {
                     flex: 1; padding: 5px 0;
                     border: 1px solid rgba(255,255,255,0.08);
                     border-radius: 7px;
                     background: transparent; color: #9ca3af;
-                    font-size: 12px; font-weight: 600;
+                    font-size: 11px; font-weight: 600;
                     cursor: pointer; transition: all 0.15s;
+                    font-family: inherit;
                 }
-                #ft-video-lock .ft-lk-dur:hover { color: #f4f4f5; background: rgba(255,255,255,0.05); }
-                #ft-video-lock .ft-lk-dur.active {
-                    background: rgba(124,58,237,0.18);
-                    border-color: rgba(124,58,237,0.4);
+                .ft-lk-preset:hover { color: #f4f4f5; background: rgba(255,255,255,0.05); }
+                .ft-lk-preset.active {
+                    background: rgba(124,58,237,0.2);
+                    border-color: rgba(124,58,237,0.45);
                     color: #a78bfa;
                 }
-                #ft-video-lock .ft-lk-start {
-                    background: #7c3aed; color: #fff;
-                    border: none; border-radius: 8px;
-                    padding: 9px 12px;
-                    font-size: 12px; font-weight: 600;
-                    cursor: pointer; transition: background 0.15s;
-                    display: flex; align-items: center; justify-content: center; gap: 5px;
+
+                /* Custom time input */
+                .ft-lk-custom {
+                    display: flex; align-items: center; gap: 7px;
                 }
-                #ft-video-lock .ft-lk-start:hover { background: #8b5cf6; }
-                #ft-video-lock .ft-lk-timer {
-                    font-size: 26px; font-weight: 800;
-                    color: #a78bfa; text-align: center;
-                    font-variant-numeric: tabular-nums;
-                    letter-spacing: -0.02em;
-                    text-shadow: 0 0 20px rgba(124,58,237,0.5);
-                    display: none;
+                .ft-lk-custom label {
+                    font-size: 11px; color: #6b7280; font-weight: 500; white-space: nowrap;
                 }
-                #ft-video-lock .ft-lk-end {
-                    background: transparent;
+                .ft-lk-custom input[type=number] {
+                    flex: 1; background: rgba(255,255,255,0.05);
                     border: 1px solid rgba(255,255,255,0.1);
-                    border-radius: 7px; color: #6b7280;
-                    padding: 6px; font-size: 11px; font-weight: 600;
-                    cursor: pointer; transition: all 0.15s; display: none;
+                    border-radius: 7px; color: #f4f4f5;
+                    padding: 5px 8px; font-size: 13px; font-weight: 600;
+                    outline: none; width: 0; font-family: inherit;
+                    font-variant-numeric: tabular-nums;
                 }
-                #ft-video-lock .ft-lk-end:hover { color: #ef4444; border-color: rgba(239,68,68,0.3); }
+                .ft-lk-custom input[type=number]:focus { border-color: rgba(124,58,237,0.5); }
+                .ft-lk-custom input[type=number]::-webkit-inner-spin-button { opacity: 0.4; }
+
+                /* Action buttons */
+                .ft-lk-start-btn {
+                    background: linear-gradient(135deg,#7c3aed,#a855f7); color: #fff;
+                    border: none; border-radius: 9px;
+                    padding: 10px 12px;
+                    font-size: 12px; font-weight: 700;
+                    cursor: pointer; transition: opacity 0.15s;
+                    display: flex; align-items: center; justify-content: center; gap: 5px;
+                    font-family: inherit; width: 100%;
+                }
+                .ft-lk-start-btn:hover { opacity: 0.88; }
+                .ft-lk-end-btn {
+                    background: rgba(239,68,68,0.1);
+                    border: 1px solid rgba(239,68,68,0.25);
+                    border-radius: 9px; color: #fca5a5;
+                    padding: 8px; font-size: 12px; font-weight: 600;
+                    cursor: pointer; transition: all 0.15s;
+                    font-family: inherit; width: 100%;
+                }
+                .ft-lk-end-btn:hover { background: rgba(239,68,68,0.18); color: #ef4444; }
             `;
 
             styleEl.textContent = css;
@@ -679,142 +772,237 @@ class FocusTube {
     // The widget lives in the bottom-right corner on /watch pages.
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Injects the Video Focus Lock widget into /watch pages.
-     * Safe to call multiple times — guards against duplicate injection.
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // VIDEO FOCUS LOCK  (FAB + draggable panel + SVG ring countdown)
+    // ─────────────────────────────────────────────────────────────────────────
+
     injectVideoLockUI() {
-        if (window.location.pathname !== '/watch') return;
-        if (document.getElementById('ft-video-lock')) return; // already injected
+        if (document.getElementById('ft-lock-fab')) return;
 
-        const widget = document.createElement('div');
-        widget.id = 'ft-video-lock';
-        widget.innerHTML = `
-            <div class="ft-lk-title">🔒 Video Focus Lock</div>
-            <div class="ft-lk-durs">
-                <button class="ft-lk-dur" data-mins="10">10m</button>
-                <button class="ft-lk-dur active" data-mins="25">25m</button>
-                <button class="ft-lk-dur" data-mins="50">50m</button>
-            </div>
-            <div class="ft-lk-timer">25:00</div>
-            <button class="ft-lk-start">🎯 Lock to This Video</button>
-            <button class="ft-lk-end">✕ End Lock</button>
-        `;
-        document.body.appendChild(widget);
-
-        let selectedMins = 25;
+        /* ── Helpers ── */
+        const CIRC = 283; // 2π × r (r=45)
         let lockInterval = null;
+        let totalSecs    = 0;
+        let selectedMins = 25;
 
-        const durBtns  = widget.querySelectorAll('.ft-lk-dur');
-        const startBtn = widget.querySelector('.ft-lk-start');
-        const endBtn   = widget.querySelector('.ft-lk-end');
-        const timerEl  = widget.querySelector('.ft-lk-timer');
-        const dursEl   = widget.querySelector('.ft-lk-durs');
+        const fmt = (ms) => {
+            const s = Math.max(0, Math.floor(ms / 1000));
+            return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+        };
 
-        // Duration picker
-        durBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                durBtns.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                selectedMins = parseInt(btn.dataset.mins, 10);
-                timerEl.textContent = `${String(selectedMins).padStart(2,'0')}:00`;
-            });
+        /* ── FAB ── */
+        const fab = document.createElement('button');
+        fab.id = 'ft-lock-fab';
+        fab.title = 'Video Focus Lock';
+        fab.textContent = '🔒';
+        document.body.appendChild(fab);
+
+        /* ── Panel ── */
+        const panel = document.createElement('div');
+        panel.id = 'ft-lock-panel';
+        panel.innerHTML = `
+            <div class="ft-lk-header">
+                <span class="ft-lk-title">🔒 Focus Lock</span>
+                <button class="ft-lk-close" title="Collapse">✕</button>
+            </div>
+            <div class="ft-lk-body">
+                <div class="ft-ring-wrap">
+                    <svg width="110" height="110" viewBox="0 0 110 110">
+                        <circle class="ft-ring-bg"   cx="55" cy="55" r="45"/>
+                        <circle class="ft-ring-prog" cx="55" cy="55" r="45"/>
+                    </svg>
+                    <div class="ft-ring-time">
+                        <span id="ft-ring-label">25:00</span>
+                        <small id="ft-ring-sub">pick time</small>
+                    </div>
+                </div>
+                <div class="ft-lk-presets">
+                    <button class="ft-lk-preset" data-m="10">10m</button>
+                    <button class="ft-lk-preset active" data-m="25">25m</button>
+                    <button class="ft-lk-preset" data-m="50">50m</button>
+                </div>
+                <div class="ft-lk-custom">
+                    <label for="ft-custom-mins">Custom:</label>
+                    <input id="ft-custom-mins" type="number" min="1" max="240" placeholder="min" />
+                </div>
+                <button class="ft-lk-start-btn" id="ft-lk-start">🎯 Lock to This Video</button>
+                <button class="ft-lk-end-btn"   id="ft-lk-end" style="display:none">✕ End Lock Early</button>
+            </div>
+        `;
+        document.body.appendChild(panel);
+
+        const ring      = panel.querySelector('.ft-ring-prog');
+        const label     = panel.querySelector('#ft-ring-label');
+        const sub       = panel.querySelector('#ft-ring-sub');
+        const presets   = panel.querySelectorAll('.ft-lk-preset');
+        const customIn  = panel.querySelector('#ft-custom-mins');
+        const startBtn  = panel.querySelector('#ft-lk-start');
+        const endBtn    = panel.querySelector('#ft-lk-end');
+
+        /* ── Toggle panel ── */
+        const openPanel  = () => panel.classList.add('visible');
+        const closePanel = () => panel.classList.remove('visible');
+        fab.addEventListener('click', () =>
+            panel.classList.contains('visible') ? closePanel() : openPanel()
+        );
+        panel.querySelector('.ft-lk-close').addEventListener('click', closePanel);
+
+        /* ── Preset picker ── */
+        const pickMins = (m) => {
+            selectedMins = m;
+            customIn.value = '';
+            presets.forEach(b => b.classList.toggle('active', +b.dataset.m === m));
+            if (!lockInterval) {
+                label.textContent = `${String(m).padStart(2,'0')}:00`;
+                sub.textContent   = 'pick time';
+                ring.style.strokeDashoffset = '0';
+            }
+        };
+        presets.forEach(b => b.addEventListener('click', () => pickMins(+b.dataset.m)));
+
+        /* Custom input overrides presets */
+        customIn.addEventListener('input', () => {
+            const v = parseInt(customIn.value, 10);
+            if (v > 0) {
+                selectedMins = v;
+                presets.forEach(b => b.classList.remove('active'));
+                if (!lockInterval) {
+                    label.textContent = `${String(v).padStart(2,'0')}:00`;
+                    ring.style.strokeDashoffset = '0';
+                }
+            }
         });
 
-        // Start lock
+        /* ── Start lock ── */
         startBtn.addEventListener('click', () => {
-            const videoUrl = window.location.href;
-            const endTime = Date.now() + selectedMins * 60 * 1000;
+            if (window.location.pathname !== '/watch') {
+                label.textContent = '⚠️';
+                sub.textContent = 'Watch page only';
+                return;
+            }
+            totalSecs = selectedMins * 60;
+            const endTime = Date.now() + totalSecs * 1000;
+            chrome.storage.local.set({ videoLock: { active: true, url: window.location.href, endTime } });
 
-            chrome.storage.local.set({ videoLock: { active: true, url: videoUrl, endTime } });
-
-            // Show timer, hide pickers
-            dursEl.style.display = 'none';
             startBtn.style.display = 'none';
-            endBtn.style.display = 'block';
-            timerEl.style.display = 'block';
+            endBtn.style.display   = 'block';
+            presets.forEach(b => b.disabled = true);
+            customIn.disabled = true;
+            fab.classList.add('active-lock');
+            sub.textContent = 'remaining';
 
             const tick = () => {
-                const remaining = endTime - Date.now();
-                if (remaining <= 0) {
-                    chrome.storage.local.set({ videoLock: { active: false } });
+                const rem = endTime - Date.now();
+                if (rem <= 0) {
                     clearInterval(lockInterval);
-                    this.resetVideoLockUI(widget);
+                    lockInterval = null;
+                    chrome.storage.local.set({ videoLock: { active: false } });
+                    this._resetLockPanel(panel, fab, presets, customIn, startBtn, endBtn, ring, label, sub);
                     return;
                 }
-                const m = Math.floor(remaining / 60000);
-                const s = Math.floor((remaining % 60000) / 1000);
-                timerEl.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+                label.textContent = fmt(rem);
+                const pct = rem / (totalSecs * 1000);
+                ring.style.strokeDashoffset = `${CIRC * (1 - pct)}`;
+                ring.classList.toggle('ending', pct < 0.15);
             };
             tick();
             lockInterval = setInterval(tick, 1000);
         });
 
-        // End lock
+        /* ── End lock ── */
         endBtn.addEventListener('click', () => {
+            clearInterval(lockInterval); lockInterval = null;
             chrome.storage.local.set({ videoLock: { active: false } });
-            clearInterval(lockInterval);
-            this.resetVideoLockUI(widget);
+            this._resetLockPanel(panel, fab, presets, customIn, startBtn, endBtn, ring, label, sub);
         });
+
+        /* ── Drag: FAB ── */
+        this._makeDraggable(fab);
+        /* ── Drag: Panel (via header) ── */
+        this._makeDraggable(panel, panel.querySelector('.ft-lk-header'));
     }
 
-    /**
-     * Resets the lock widget back to its initial (unlocked) state.
-     */
-    resetVideoLockUI(widget) {
-        if (!widget) widget = document.getElementById('ft-video-lock');
-        if (!widget) return;
-        const dursEl   = widget.querySelector('.ft-lk-durs');
-        const startBtn = widget.querySelector('.ft-lk-start');
-        const endBtn   = widget.querySelector('.ft-lk-end');
-        const timerEl  = widget.querySelector('.ft-lk-timer');
-        if (dursEl)   dursEl.style.display = 'flex';
-        if (startBtn) startBtn.style.display = 'flex';
-        if (endBtn)   endBtn.style.display = 'none';
-        if (timerEl)  timerEl.style.display = 'none';
+    _resetLockPanel(panel, fab, presets, customIn, startBtn, endBtn, ring, label, sub) {
+        fab.classList.remove('active-lock');
+        startBtn.style.display = 'flex';
+        endBtn.style.display   = 'none';
+        presets.forEach(b => b.disabled = false);
+        customIn.disabled = false;
+        ring.style.strokeDashoffset = '0';
+        ring.classList.remove('ending');
+        label.textContent = '25:00';
+        sub.textContent   = 'pick time';
+        panel.classList.remove('visible'); // auto-collapse to FAB
     }
 
-    /**
-     * Checks if a video lock is active on every navigation.
-     * If the user navigates away from the locked video URL, redirects them back.
-     */
+    _makeDraggable(el, handle) {
+        const h = handle || el;
+        let startX, startY, startL, startT, isDragging = false;
+
+        const getPos = () => {
+            const style = window.getComputedStyle(el);
+            return {
+                left:   parseInt(style.left)   || (window.innerWidth  - el.offsetWidth  - 20),
+                top:    parseInt(style.top)    || (window.innerHeight - el.offsetHeight - 80),
+                right:  parseInt(style.right),
+                bottom: parseInt(style.bottom)
+            };
+        };
+
+        h.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            const pos = getPos();
+            // Convert right/bottom to left/top for drag math
+            const left = isNaN(pos.left) ? window.innerWidth  - el.offsetWidth  - pos.right  : pos.left;
+            const top  = isNaN(pos.top)  ? window.innerHeight - el.offsetHeight - pos.bottom : pos.top;
+            el.style.right  = 'auto';
+            el.style.bottom = 'auto';
+            el.style.left   = left  + 'px';
+            el.style.top    = top   + 'px';
+            startX = e.clientX; startY = e.clientY;
+            startL = left;      startT = top;
+            isDragging = true;
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const nx = Math.max(0, Math.min(window.innerWidth  - el.offsetWidth,  startL + e.clientX - startX));
+            const ny = Math.max(0, Math.min(window.innerHeight - el.offsetHeight, startT + e.clientY - startY));
+            el.style.left = nx + 'px';
+            el.style.top  = ny + 'px';
+        });
+
+        document.addEventListener('mouseup', () => { isDragging = false; });
+    }
+
     checkVideoLock() {
         chrome.storage.local.get({ videoLock: { active: false } }, (data) => {
             const lock = data.videoLock;
             if (!lock || !lock.active) return;
-
-            // Lock expired?
             if (Date.now() > lock.endTime) {
                 chrome.storage.local.set({ videoLock: { active: false } });
                 return;
             }
-
-            // User navigated away from the locked video
             if (window.location.href !== lock.url) {
-                // Show overlay nudge instead of hard redirect
                 this.showVideoLockNudge(lock.url);
             }
         });
     }
 
-    /**
-     * Shows a soft overlay when the user tries to navigate away during a lock.
-     * Has a "Go back" button and a "Break lock" escape hatch.
-     */
     showVideoLockNudge(lockedUrl) {
         if (document.getElementById('ft-lock-nudge')) return;
-
         const nudge = document.createElement('div');
         nudge.id = 'ft-lock-nudge';
         nudge.style.cssText = `
-            position: fixed; inset: 0;
-            background: rgba(10,10,12,0.92);
-            z-index: 2147483647;
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            text-align: center; padding: 24px;
-            backdrop-filter: blur(8px);
+            position:fixed;inset:0;
+            background:rgba(10,10,12,0.92);
+            z-index:2147483647;
+            display:flex;flex-direction:column;
+            align-items:center;justify-content:center;
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+            text-align:center;padding:24px;
+            backdrop-filter:blur(8px);
         `;
         nudge.innerHTML = `
             <div style="font-size:56px;margin-bottom:20px">🔒</div>
@@ -823,31 +1011,16 @@ class FocusTube {
                 You locked yourself to a video. Stay focused!
             </p>
             <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
-                <button id="ft-nudge-back" style="
-                    background:#7c3aed;color:#fff;border:none;
-                    padding:13px 28px;border-radius:9px;
-                    font-size:14px;font-weight:600;cursor:pointer">
-                    ← Go Back to Video
-                </button>
-                <button id="ft-nudge-break" style="
-                    background:transparent;color:#6b7280;
-                    border:1px solid rgba(255,255,255,0.1);
-                    padding:13px 28px;border-radius:9px;
-                    font-size:14px;font-weight:600;cursor:pointer">
-                    Break Lock
-                </button>
+                <button id="ft-nudge-back" style="background:#7c3aed;color:#fff;border:none;padding:13px 28px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer">← Go Back</button>
+                <button id="ft-nudge-break" style="background:transparent;color:#6b7280;border:1px solid rgba(255,255,255,0.1);padding:13px 28px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer">Break Lock</button>
             </div>
         `;
         document.body.appendChild(nudge);
-
-        document.getElementById('ft-nudge-back').onclick = () => {
-            window.location.href = lockedUrl;
-        };
+        document.getElementById('ft-nudge-back').onclick  = () => { window.location.href = lockedUrl; };
         document.getElementById('ft-nudge-break').onclick = () => {
             chrome.storage.local.set({ videoLock: { active: false } });
             nudge.remove();
         };
-    }
 
     processDOM() {
         try {

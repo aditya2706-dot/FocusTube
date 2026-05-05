@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FocusTube — Distraction-Free YouTube",
   "short_name": "FocusTube",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Block Shorts, filter clickbait by keyword, quick-block channels on hover, and lock deep focus sessions. Zero tracking.",
   "author": "FocusTube Contributors",
   "homepage_url": "https://github.com/aditya2706-dot/extention-yt",

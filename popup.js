@@ -1,5 +1,5 @@
 /**
- * FocusTube v1.2.0 — Popup Script
+ * FocusTube v1.2.1 — Popup Script
  * Premium UI with animated score ring, duration picker, live blocks counter,
  * removable blocked-channel chips, and first-run welcome hint.
  */
