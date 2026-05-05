@@ -1,5 +1,5 @@
 /**
- * FocusTube v1.0.2 - Background Service Worker
+ * FocusTube v1.2.0 - Background Service Worker
  * Manages Focus Session timer + lightweight daily score/streak tracking.
  *
  * Score formula (simple & reliable):
@@ -147,3 +147,25 @@ setInterval(() => {
     chrome.storage.sync.set({ isFocusSessionActive: false });
   }
 }, 10000);
+
+// ── First-run onboarding ──────────────────────────────────────────────────────
+// Opens the welcome/docs page the first time FocusTube is installed.
+// Sets firstRun:false so it never triggers again.
+
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') {
+    // Mark first run complete so the popup can show the welcome hint
+    chrome.storage.local.set({ firstRun: true });
+
+    // Open welcome page in a new tab
+    chrome.tabs.create({
+      url: chrome.runtime.getURL('docs/index.html')
+    });
+  }
+
+  // On update: log the new version (visible in chrome://extensions background)
+  if (details.reason === 'update') {
+    const version = chrome.runtime.getManifest().version;
+    console.log(`[FocusTube] Updated to v${version}`);
+  }
+});

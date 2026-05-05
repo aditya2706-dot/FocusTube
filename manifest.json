@@ -1,10 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "FocusTube",
-  "version": "1.1.1",
-  "description": "Block YouTube Shorts, filter distracting content by keyword & channel, and lock in with a Focus Session timer.",
+  "name": "FocusTube — Distraction-Free YouTube",
+  "short_name": "FocusTube",
+  "version": "1.2.0",
+  "description": "Block Shorts, filter clickbait by keyword, quick-block channels on hover, and lock deep focus sessions. Zero tracking.",
+  "author": "FocusTube Contributors",
+  "homepage_url": "https://github.com/aditya2706-dot/extention-yt",
   "permissions": [
-    "storage"
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "*://*.youtube.com/*"
@@ -15,7 +19,8 @@
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
-    }
+    },
+    "default_title": "FocusTube — Click to manage your focus settings"
   },
   "background": {
     "service_worker": "background.js"

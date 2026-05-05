@@ -1,5 +1,5 @@
 /**
- * FocusTube v1.0.1 - Production Content Script
+ * FocusTube v1.2.0 - Production Content Script
  * Handles DOM manipulation with high performance, robust selectors, and smart filtering.
  *
  * Bug fixes in this version:
@@ -706,6 +706,127 @@ class FocusTube {
     removeFullPageBlock() {
         const overlay = document.getElementById('focustube-video-block');
         if (overlay) overlay.remove();
+    }
+
+    /**
+     * Quick Channel Block — injects a 🚫 button on each video card.
+     * Hovering the card reveals the button (via CSS).
+     * Clicking it immediately adds the channel to the blockedChannels list.
+     *
+     * @param {HTMLElement} el          — the video card element
+     * @param {string}      channelName — channel name already extracted by processDOM
+     */
+    injectQuickBlockButton(el, channelName) {
+        // Only inject if we have a channel name and haven't done it yet
+        if (!channelName || el.dataset.ftHasBtn === 'true') return;
+
+        // Find the thumbnail anchor to position the button over it
+        const thumb = el.querySelector(this.selectors.thumbnailLinks.join(', '));
+        const anchor = thumb || el;
+
+        // Mark the anchor as the positioning parent (CSS rule: [data-ft-has-btn])
+        anchor.dataset.ftHasBtn = 'true';
+
+        // Create the block button
+        const btn = document.createElement('button');
+        btn.className = 'ft-block-btn';
+        btn.title = `Block "${channelName}"`;
+        btn.setAttribute('aria-label', `Block channel: ${channelName}`);
+        btn.innerHTML = '🚫';
+
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation(); // Don't trigger video navigation
+
+            this.blockChannelQuick(channelName, el);
+        });
+
+        anchor.appendChild(btn);
+
+        // Mark the card so we don't inject twice
+        el.dataset.ftHasBtn = 'true';
+    }
+
+    /**
+     * Called when the 🚫 button is clicked.
+     * Adds channel to storage, hides the card immediately, shows toast.
+     *
+     * @param {string}      channelName — channel to block
+     * @param {HTMLElement} cardEl      — the video card to hide right away
+     */
+    blockChannelQuick(channelName, cardEl) {
+        const normalized = channelName.trim().toLowerCase();
+        if (!normalized) return;
+
+        // Hide the card immediately — no waiting for storage
+        cardEl.style.display = 'none';
+        cardEl.dataset.ftHidden = 'true';
+
+        // Add to local list so future processDOM calls catch it instantly
+        if (!this.lists.blockedChannels.includes(normalized)) {
+            this.lists.blockedChannels.push(normalized);
+        }
+
+        // Persist to chrome.storage.sync so it survives page refresh
+        chrome.storage.sync.get({ blockedChannels: '' }, (data) => {
+            const existing = data.blockedChannels
+                ? data.blockedChannels.split('\n').map(s => s.trim()).filter(Boolean)
+                : [];
+
+            // Avoid duplicates in storage
+            if (!existing.map(s => s.toLowerCase()).includes(normalized)) {
+                existing.push(channelName.trim()); // Store original casing
+            }
+
+            chrome.storage.sync.set({ blockedChannels: existing.join('\n') }, () => {
+                this.logger.log(`Quick-blocked channel: "${channelName}"`);
+            });
+        });
+
+        // Hide all currently visible cards from this channel on the page
+        const selector = this.selectors.videoContainers.join(', ');
+        document.querySelectorAll(selector).forEach(el => {
+            const name = this.extractElementText(el, this.selectors.channelElements);
+            if (name && name.toLowerCase().includes(normalized)) {
+                el.style.display = 'none';
+                el.dataset.ftHidden = 'true';
+            }
+        });
+
+        // Show a friendly toast notification
+        this.showBlockToast(channelName);
+
+        // Increment block counter
+        this._pendingBlocks++;
+    }
+
+    /**
+     * Shows a temporary toast at the bottom of the screen.
+     * Auto-dismisses after 3 seconds.
+     *
+     * @param {string} channelName — channel name to show in the toast
+     */
+    showBlockToast(channelName) {
+        // Remove any existing toast first
+        const existing = document.getElementById('ft-block-toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'ft-block-toast';
+        toast.className = 'ft-block-toast';
+        toast.innerHTML = `🚫 <strong>"${channelName}"</strong> blocked`;
+        document.body.appendChild(toast);
+
+        // Trigger animation on next frame
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => toast.classList.add('show'));
+        });
+
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 400);
+        }, 3000);
     }
 
     processDOM() {

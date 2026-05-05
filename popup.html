@@ -7,6 +7,19 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
+
+  <!-- ── First-Run Welcome Banner ───────────────────── -->
+  <div id="welcomeBanner" class="welcome-banner" style="display:none">
+    <div class="welcome-content">
+      <div class="welcome-icon">🎯</div>
+      <div class="welcome-text">
+        <strong>Welcome to FocusTube!</strong>
+        <span>Hover any video → click 🚫 to instantly block a channel.</span>
+        <span>Use keyword lists to filter content. Start a Focus Session to lock in.</span>
+      </div>
+    </div>
+    <button id="welcomeDismiss" class="welcome-dismiss">Got it ✓</button>
+  </div>
   <div class="app-container">
 
     <!-- ── Header ─────────────────────────────── -->
@@ -15,7 +28,7 @@
         <div class="logo-icon"></div>
         <h1>FocusTube</h1>
       </div>
-      <span class="header-version">v1.0.2</span>
+      <span class="header-version">v1.2.0</span>
     </header>
 
     <!-- ── Focus Card (Score + Session) ─────── -->
@@ -75,6 +88,11 @@
         <span class="btn-icon">🎯</span> Start Deep Focus (25m)
       </button>
     </section>
+
+    <!-- ── Hover Hint ───────────────────────────────── -->
+    <div class="hover-hint">
+      💡 <strong>Hover any video</strong> and click 🚫 to instantly block its channel
+    </div>
 
     <!-- ── Settings ──────────────────────────── -->
     <div id="settingsContainer">
@@ -174,6 +192,8 @@
         <div class="input-group">
           <label for="blockedChannels">Blocked Channels <span class="badge">Per line</span></label>
           <textarea id="blockedChannels" placeholder="MrBeast&#10;PewDiePie"></textarea>
+          <!-- Removable chips injected here by popup.js -->
+          <div id="blockedChips" class="ft-chips" style="display:none"></div>
         </div>
         <div class="input-group">
           <label for="allowedChannels">Allowed Channels <span class="badge accent-badge">Whitelist only</span></label>

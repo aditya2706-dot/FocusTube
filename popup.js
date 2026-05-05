@@ -1,6 +1,7 @@
 /**
- * FocusTube v1.0.2 — Popup Script
- * Premium UI with animated score ring, duration picker, live blocks counter.
+ * FocusTube v1.2.0 — Popup Script
+ * Premium UI with animated score ring, duration picker, live blocks counter,
+ * removable blocked-channel chips, and first-run welcome hint.
  */
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -304,5 +305,83 @@ document.addEventListener('DOMContentLoaded', () => {
       saveSettings();
     });
   });
+
+  // ── Blocked Channel Chips ─────────────────────────────────────────────
+  // Renders a removable chip for each blocked channel below the textarea.
+  // Syncs with storage on every remove click.
+
+  const blockedChipsEl = document.getElementById('blockedChips');
+
+  function renderBlockedChips(raw) {
+    if (!blockedChipsEl) return;
+    const channels = raw
+      ? raw.split('\n').map(s => s.trim()).filter(Boolean)
+      : [];
+
+    blockedChipsEl.innerHTML = '';
+
+    if (channels.length === 0) {
+      blockedChipsEl.style.display = 'none';
+      return;
+    }
+
+    blockedChipsEl.style.display = 'flex';
+
+    channels.forEach(ch => {
+      const chip = document.createElement('span');
+      chip.className = 'ft-chip';
+      chip.innerHTML = `${ch} <button class="ft-chip-remove" title="Unblock ${ch}">✕</button>`;
+
+      chip.querySelector('.ft-chip-remove').addEventListener('click', () => {
+        const updated = channels.filter(c => c !== ch).join('\n');
+        elements.blockedChannels.value = updated;
+        chrome.storage.sync.set({ blockedChannels: updated }, () => {
+          renderBlockedChips(updated);
+          statusMsg.classList.add('show');
+          setTimeout(() => statusMsg.classList.remove('show'), 2000);
+        });
+      });
+
+      blockedChipsEl.appendChild(chip);
+    });
+  }
+
+  // Initial render from loaded settings
+  chrome.storage.sync.get({ blockedChannels: '' }, data => {
+    renderBlockedChips(data.blockedChannels);
+  });
+
+  // Re-render whenever the textarea changes
+  elements.blockedChannels.addEventListener('input', () => {
+    renderBlockedChips(elements.blockedChannels.value);
+  });
+
+  // Re-render when storage changes externally (e.g. quick-block from content.js)
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.blockedChannels) {
+      const newVal = changes.blockedChannels.newValue || '';
+      elements.blockedChannels.value = newVal;
+      renderBlockedChips(newVal);
+    }
+  });
+
+  // ── First-Run Welcome Banner ──────────────────────────────────────────
+  // Shows once after install, then never again.
+
+  const welcomeBanner = document.getElementById('welcomeBanner');
+  const welcomeDismiss = document.getElementById('welcomeDismiss');
+
+  chrome.storage.local.get({ firstRun: false }, data => {
+    if (data.firstRun && welcomeBanner) {
+      welcomeBanner.style.display = 'flex';
+    }
+  });
+
+  if (welcomeDismiss) {
+    welcomeDismiss.addEventListener('click', () => {
+      if (welcomeBanner) welcomeBanner.style.display = 'none';
+      chrome.storage.local.set({ firstRun: false });
+    });
+  }
 });
 
