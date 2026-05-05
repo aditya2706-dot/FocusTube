@@ -1021,6 +1021,7 @@ class FocusTube {
             chrome.storage.local.set({ videoLock: { active: false } });
             nudge.remove();
         };
+    }
 
     processDOM() {
         try {
