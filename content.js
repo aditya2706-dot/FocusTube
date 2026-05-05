@@ -264,50 +264,6 @@ class FocusTube {
                 css += `.ytp-cards-header { display: none !important; }\n`;
             }
 
-            // ── Quick Block Button (appears on hover of every video card) ───────
-            css += `
-                [data-ft-has-btn] { position: relative !important; }
-                .ft-block-btn {
-                    position: absolute;
-                    top: 6px; right: 6px;
-                    z-index: 9990;
-                    background: rgba(10,10,10,0.72);
-                    backdrop-filter: blur(6px);
-                    color: #fff;
-                    border: 1px solid rgba(255,255,255,0.15);
-                    border-radius: 50%;
-                    width: 30px; height: 30px;
-                    font-size: 14px;
-                    cursor: pointer;
-                    display: none;
-                    align-items: center;
-                    justify-content: center;
-                    transition: background 0.15s, transform 0.15s;
-                    line-height: 1;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-                }
-                [data-ft-has-btn]:hover .ft-block-btn { display: flex !important; }
-                .ft-block-btn:hover { background: rgba(239,68,68,0.88) !important; transform: scale(1.1); }
-                .ft-block-toast {
-                    position: fixed;
-                    bottom: 24px; left: 50%;
-                    transform: translateX(-50%) translateY(80px);
-                    background: #ef4444;
-                    color: #fff;
-                    padding: 8px 18px;
-                    border-radius: 99px;
-                    font-size: 13px; font-weight: 600;
-                    z-index: 2147483640;
-                    opacity: 0;
-                    transition: all 0.35s cubic-bezier(0.34,1.56,0.64,1);
-                    pointer-events: none;
-                }
-                .ft-block-toast.show {
-                    transform: translateX(-50%) translateY(0);
-                    opacity: 1;
-                }
-            `;
-
             // ── Video Focus Lock Widget ──────────────────────────────────────────
             css += `
                 #ft-video-lock {
@@ -716,117 +672,181 @@ class FocusTube {
      * @param {HTMLElement} el          — the video card element
      * @param {string}      channelName — channel name already extracted by processDOM
      */
-    injectQuickBlockButton(el, channelName) {
-        // Only inject if we have a channel name and haven't done it yet
-        if (!channelName || el.dataset.ftHasBtn === 'true') return;
 
-        // Find the thumbnail anchor to position the button over it
-        const thumb = el.querySelector(this.selectors.thumbnailLinks.join(', '));
-        const anchor = thumb || el;
-
-        // Mark the anchor as the positioning parent (CSS rule: [data-ft-has-btn])
-        anchor.dataset.ftHasBtn = 'true';
-
-        // Create the block button
-        const btn = document.createElement('button');
-        btn.className = 'ft-block-btn';
-        btn.title = `Block "${channelName}"`;
-        btn.setAttribute('aria-label', `Block channel: ${channelName}`);
-        btn.innerHTML = '🚫';
-
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation(); // Don't trigger video navigation
-
-            this.blockChannelQuick(channelName, el);
-        });
-
-        anchor.appendChild(btn);
-
-        // Mark the card so we don't inject twice
-        el.dataset.ftHasBtn = 'true';
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // VIDEO FOCUS LOCK
+    // Users can lock themselves to a single video for N minutes.
+    // The widget lives in the bottom-right corner on /watch pages.
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Called when the 🚫 button is clicked.
-     * Adds channel to storage, hides the card immediately, shows toast.
-     *
-     * @param {string}      channelName — channel to block
-     * @param {HTMLElement} cardEl      — the video card to hide right away
+     * Injects the Video Focus Lock widget into /watch pages.
+     * Safe to call multiple times — guards against duplicate injection.
      */
-    blockChannelQuick(channelName, cardEl) {
-        const normalized = channelName.trim().toLowerCase();
-        if (!normalized) return;
+    injectVideoLockUI() {
+        if (window.location.pathname !== '/watch') return;
+        if (document.getElementById('ft-video-lock')) return; // already injected
 
-        // Hide the card immediately — no waiting for storage
-        cardEl.style.display = 'none';
-        cardEl.dataset.ftHidden = 'true';
+        const widget = document.createElement('div');
+        widget.id = 'ft-video-lock';
+        widget.innerHTML = `
+            <div class="ft-lk-title">🔒 Video Focus Lock</div>
+            <div class="ft-lk-durs">
+                <button class="ft-lk-dur" data-mins="10">10m</button>
+                <button class="ft-lk-dur active" data-mins="25">25m</button>
+                <button class="ft-lk-dur" data-mins="50">50m</button>
+            </div>
+            <div class="ft-lk-timer">25:00</div>
+            <button class="ft-lk-start">🎯 Lock to This Video</button>
+            <button class="ft-lk-end">✕ End Lock</button>
+        `;
+        document.body.appendChild(widget);
 
-        // Add to local list so future processDOM calls catch it instantly
-        if (!this.lists.blockedChannels.includes(normalized)) {
-            this.lists.blockedChannels.push(normalized);
-        }
+        let selectedMins = 25;
+        let lockInterval = null;
 
-        // Persist to chrome.storage.sync so it survives page refresh
-        chrome.storage.sync.get({ blockedChannels: '' }, (data) => {
-            const existing = data.blockedChannels
-                ? data.blockedChannels.split('\n').map(s => s.trim()).filter(Boolean)
-                : [];
+        const durBtns  = widget.querySelectorAll('.ft-lk-dur');
+        const startBtn = widget.querySelector('.ft-lk-start');
+        const endBtn   = widget.querySelector('.ft-lk-end');
+        const timerEl  = widget.querySelector('.ft-lk-timer');
+        const dursEl   = widget.querySelector('.ft-lk-durs');
 
-            // Avoid duplicates in storage
-            if (!existing.map(s => s.toLowerCase()).includes(normalized)) {
-                existing.push(channelName.trim()); // Store original casing
-            }
-
-            chrome.storage.sync.set({ blockedChannels: existing.join('\n') }, () => {
-                this.logger.log(`Quick-blocked channel: "${channelName}"`);
+        // Duration picker
+        durBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                durBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                selectedMins = parseInt(btn.dataset.mins, 10);
+                timerEl.textContent = `${String(selectedMins).padStart(2,'0')}:00`;
             });
         });
 
-        // Hide all currently visible cards from this channel on the page
-        const selector = this.selectors.videoContainers.join(', ');
-        document.querySelectorAll(selector).forEach(el => {
-            const name = this.extractElementText(el, this.selectors.channelElements);
-            if (name && name.toLowerCase().includes(normalized)) {
-                el.style.display = 'none';
-                el.dataset.ftHidden = 'true';
-            }
+        // Start lock
+        startBtn.addEventListener('click', () => {
+            const videoUrl = window.location.href;
+            const endTime = Date.now() + selectedMins * 60 * 1000;
+
+            chrome.storage.local.set({ videoLock: { active: true, url: videoUrl, endTime } });
+
+            // Show timer, hide pickers
+            dursEl.style.display = 'none';
+            startBtn.style.display = 'none';
+            endBtn.style.display = 'block';
+            timerEl.style.display = 'block';
+
+            const tick = () => {
+                const remaining = endTime - Date.now();
+                if (remaining <= 0) {
+                    chrome.storage.local.set({ videoLock: { active: false } });
+                    clearInterval(lockInterval);
+                    this.resetVideoLockUI(widget);
+                    return;
+                }
+                const m = Math.floor(remaining / 60000);
+                const s = Math.floor((remaining % 60000) / 1000);
+                timerEl.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+            };
+            tick();
+            lockInterval = setInterval(tick, 1000);
         });
 
-        // Show a friendly toast notification
-        this.showBlockToast(channelName);
-
-        // Increment block counter
-        this._pendingBlocks++;
+        // End lock
+        endBtn.addEventListener('click', () => {
+            chrome.storage.local.set({ videoLock: { active: false } });
+            clearInterval(lockInterval);
+            this.resetVideoLockUI(widget);
+        });
     }
 
     /**
-     * Shows a temporary toast at the bottom of the screen.
-     * Auto-dismisses after 3 seconds.
-     *
-     * @param {string} channelName — channel name to show in the toast
+     * Resets the lock widget back to its initial (unlocked) state.
      */
-    showBlockToast(channelName) {
-        // Remove any existing toast first
-        const existing = document.getElementById('ft-block-toast');
-        if (existing) existing.remove();
+    resetVideoLockUI(widget) {
+        if (!widget) widget = document.getElementById('ft-video-lock');
+        if (!widget) return;
+        const dursEl   = widget.querySelector('.ft-lk-durs');
+        const startBtn = widget.querySelector('.ft-lk-start');
+        const endBtn   = widget.querySelector('.ft-lk-end');
+        const timerEl  = widget.querySelector('.ft-lk-timer');
+        if (dursEl)   dursEl.style.display = 'flex';
+        if (startBtn) startBtn.style.display = 'flex';
+        if (endBtn)   endBtn.style.display = 'none';
+        if (timerEl)  timerEl.style.display = 'none';
+    }
 
-        const toast = document.createElement('div');
-        toast.id = 'ft-block-toast';
-        toast.className = 'ft-block-toast';
-        toast.innerHTML = `🚫 <strong>"${channelName}"</strong> blocked`;
-        document.body.appendChild(toast);
+    /**
+     * Checks if a video lock is active on every navigation.
+     * If the user navigates away from the locked video URL, redirects them back.
+     */
+    checkVideoLock() {
+        chrome.storage.local.get({ videoLock: { active: false } }, (data) => {
+            const lock = data.videoLock;
+            if (!lock || !lock.active) return;
 
-        // Trigger animation on next frame
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => toast.classList.add('show'));
+            // Lock expired?
+            if (Date.now() > lock.endTime) {
+                chrome.storage.local.set({ videoLock: { active: false } });
+                return;
+            }
+
+            // User navigated away from the locked video
+            if (window.location.href !== lock.url) {
+                // Show overlay nudge instead of hard redirect
+                this.showVideoLockNudge(lock.url);
+            }
         });
+    }
 
-        // Auto-hide after 3 seconds
-        setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 400);
-        }, 3000);
+    /**
+     * Shows a soft overlay when the user tries to navigate away during a lock.
+     * Has a "Go back" button and a "Break lock" escape hatch.
+     */
+    showVideoLockNudge(lockedUrl) {
+        if (document.getElementById('ft-lock-nudge')) return;
+
+        const nudge = document.createElement('div');
+        nudge.id = 'ft-lock-nudge';
+        nudge.style.cssText = `
+            position: fixed; inset: 0;
+            background: rgba(10,10,12,0.92);
+            z-index: 2147483647;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            text-align: center; padding: 24px;
+            backdrop-filter: blur(8px);
+        `;
+        nudge.innerHTML = `
+            <div style="font-size:56px;margin-bottom:20px">🔒</div>
+            <h2 style="color:#f4f4f5;font-size:24px;font-weight:700;margin:0 0 10px">Video Lock Active</h2>
+            <p style="color:#a1a1aa;font-size:15px;max-width:380px;line-height:1.6;margin:0 0 32px">
+                You locked yourself to a video. Stay focused!
+            </p>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+                <button id="ft-nudge-back" style="
+                    background:#7c3aed;color:#fff;border:none;
+                    padding:13px 28px;border-radius:9px;
+                    font-size:14px;font-weight:600;cursor:pointer">
+                    ← Go Back to Video
+                </button>
+                <button id="ft-nudge-break" style="
+                    background:transparent;color:#6b7280;
+                    border:1px solid rgba(255,255,255,0.1);
+                    padding:13px 28px;border-radius:9px;
+                    font-size:14px;font-weight:600;cursor:pointer">
+                    Break Lock
+                </button>
+            </div>
+        `;
+        document.body.appendChild(nudge);
+
+        document.getElementById('ft-nudge-back').onclick = () => {
+            window.location.href = lockedUrl;
+        };
+        document.getElementById('ft-nudge-break').onclick = () => {
+            chrome.storage.local.set({ videoLock: { active: false } });
+            nudge.remove();
+        };
     }
 
     processDOM() {
@@ -866,8 +886,6 @@ class FocusTube {
                 } else {
                     el.style.display = '';
                     el.dataset.ftHidden = 'false';
-                    // Inject the quick-block button on visible cards
-                    this.injectQuickBlockButton(el, channelName);
                 }
 
                 el.dataset.ftProcessedKey = stateKey;
