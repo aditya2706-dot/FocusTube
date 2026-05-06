@@ -271,7 +271,7 @@ class FocusTube {
                     position: fixed;
                     bottom: 80px; right: 20px;
                     z-index: 2147483646;
-                    width: 52px; height: 52px;
+                    width: 44px; height: 44px;
                     border-radius: 50%;
                     background: linear-gradient(135deg,#7c3aed,#a855f7);
                     box-shadow: 0 4px 20px rgba(124,58,237,0.55);
@@ -777,32 +777,47 @@ class FocusTube {
     // ─────────────────────────────────────────────────────────────────────────
 
     injectVideoLockUI() {
-        if (document.getElementById('ft-lock-fab')) return;
+        if (document.getElementById('ft-lock-fab')) {
+            // FAB already exists (SPA nav) — just resume timer if still active
+            this._resumeLockFromStorage();
+            return;
+        }
 
         /* ── Helpers ── */
-        const CIRC = 283; // 2π × r (r=45)
-        let lockInterval = null;
-        let totalSecs    = 0;
-        let selectedMins = 25;
-
+        const CIRC = 283;
+        this._lockInterval = null;
+        this._lockSelectedMins = 25;
         const fmt = (ms) => {
             const s = Math.max(0, Math.floor(ms / 1000));
             return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
         };
+        this._fmt  = fmt;
+        this._CIRC = CIRC;
 
         /* ── FAB ── */
         const fab = document.createElement('button');
         fab.id = 'ft-lock-fab';
-        fab.title = 'Video Focus Lock';
+        fab.title = 'Focus Lock · double-click to go mini';
         fab.textContent = '🔒';
         document.body.appendChild(fab);
+        this._fab = fab;
+
+        /* ── Double-click FAB to toggle mini (32px) / normal (44px) ── */
+        let isMini = false;
+        fab.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            isMini = !isMini;
+            fab.style.width    = isMini ? '32px' : '';
+            fab.style.height   = isMini ? '32px' : '';
+            fab.style.fontSize = isMini ? '14px' : '';
+        });
 
         /* ── Panel ── */
         const panel = document.createElement('div');
         panel.id = 'ft-lock-panel';
         panel.innerHTML = `
             <div class="ft-lk-header">
-                <span class="ft-lk-title">🔒 Focus Lock</span>
+                <span class="ft-lk-title" id="ft-lk-title-text">🔒 Focus Lock</span>
                 <button class="ft-lk-close" title="Collapse">✕</button>
             </div>
             <div class="ft-lk-body">
@@ -816,12 +831,12 @@ class FocusTube {
                         <small id="ft-ring-sub">pick time</small>
                     </div>
                 </div>
-                <div class="ft-lk-presets">
+                <div class="ft-lk-presets" id="ft-lk-presets-row">
                     <button class="ft-lk-preset" data-m="10">10m</button>
                     <button class="ft-lk-preset active" data-m="25">25m</button>
                     <button class="ft-lk-preset" data-m="50">50m</button>
                 </div>
-                <div class="ft-lk-custom">
+                <div class="ft-lk-custom" id="ft-lk-custom-row">
                     <label for="ft-custom-mins">Custom:</label>
                     <input id="ft-custom-mins" type="number" min="1" max="240" placeholder="min" />
                 </div>
@@ -830,109 +845,140 @@ class FocusTube {
             </div>
         `;
         document.body.appendChild(panel);
+        this._panel      = panel;
+        this._ring       = panel.querySelector('.ft-ring-prog');
+        this._label      = panel.querySelector('#ft-ring-label');
+        this._sub        = panel.querySelector('#ft-ring-sub');
+        this._titleTxt   = panel.querySelector('#ft-lk-title-text');
+        this._presets    = panel.querySelectorAll('.ft-lk-preset');
+        this._customIn   = panel.querySelector('#ft-custom-mins');
+        this._startBtn   = panel.querySelector('#ft-lk-start');
+        this._endBtn     = panel.querySelector('#ft-lk-end');
+        this._presetsRow = panel.querySelector('#ft-lk-presets-row');
+        this._customRow  = panel.querySelector('#ft-lk-custom-row');
 
-        const ring      = panel.querySelector('.ft-ring-prog');
-        const label     = panel.querySelector('#ft-ring-label');
-        const sub       = panel.querySelector('#ft-ring-sub');
-        const presets   = panel.querySelectorAll('.ft-lk-preset');
-        const customIn  = panel.querySelector('#ft-custom-mins');
-        const startBtn  = panel.querySelector('#ft-lk-start');
-        const endBtn    = panel.querySelector('#ft-lk-end');
-
-        /* ── Toggle panel ── */
-        const openPanel  = () => panel.classList.add('visible');
-        const closePanel = () => panel.classList.remove('visible');
-        fab.addEventListener('click', () =>
-            panel.classList.contains('visible') ? closePanel() : openPanel()
-        );
-        panel.querySelector('.ft-lk-close').addEventListener('click', closePanel);
+        /* ── Toggle panel (single-click; dblclick handled above) ── */
+        fab.addEventListener('click', (e) => {
+            if (e.detail > 1) return;
+            panel.classList.contains('visible')
+                ? panel.classList.remove('visible')
+                : panel.classList.add('visible');
+        });
+        panel.querySelector('.ft-lk-close').addEventListener('click', () => panel.classList.remove('visible'));
 
         /* ── Preset picker ── */
-        const pickMins = (m) => {
-            selectedMins = m;
-            customIn.value = '';
-            presets.forEach(b => b.classList.toggle('active', +b.dataset.m === m));
-            if (!lockInterval) {
-                label.textContent = `${String(m).padStart(2,'0')}:00`;
-                sub.textContent   = 'pick time';
-                ring.style.strokeDashoffset = '0';
+        this._presets.forEach(b => b.addEventListener('click', () => {
+            const m = +b.dataset.m;
+            this._lockSelectedMins = m;
+            this._customIn.value = '';
+            this._presets.forEach(x => x.classList.toggle('active', +x.dataset.m === m));
+            if (!this._lockInterval) {
+                this._label.textContent = `${String(m).padStart(2,'0')}:00`;
+                this._sub.textContent = 'pick time';
+                this._ring.style.strokeDashoffset = '0';
             }
-        };
-        presets.forEach(b => b.addEventListener('click', () => pickMins(+b.dataset.m)));
+        }));
 
-        /* Custom input overrides presets */
-        customIn.addEventListener('input', () => {
-            const v = parseInt(customIn.value, 10);
+        /* ── Custom input ── */
+        this._customIn.addEventListener('input', () => {
+            const v = parseInt(this._customIn.value, 10);
             if (v > 0) {
-                selectedMins = v;
-                presets.forEach(b => b.classList.remove('active'));
-                if (!lockInterval) {
-                    label.textContent = `${String(v).padStart(2,'0')}:00`;
-                    ring.style.strokeDashoffset = '0';
+                this._lockSelectedMins = v;
+                this._presets.forEach(b => b.classList.remove('active'));
+                if (!this._lockInterval) {
+                    this._label.textContent = `${String(v).padStart(2,'0')}:00`;
+                    this._ring.style.strokeDashoffset = '0';
                 }
             }
         });
 
         /* ── Start lock ── */
-        startBtn.addEventListener('click', () => {
+        this._startBtn.addEventListener('click', () => {
             if (window.location.pathname !== '/watch') {
-                label.textContent = '⚠️';
-                sub.textContent = 'Watch page only';
+                this._label.textContent = '⚠️';
+                this._sub.textContent = 'Watch page only';
                 return;
             }
-            totalSecs = selectedMins * 60;
-            const endTime = Date.now() + totalSecs * 1000;
-            chrome.storage.local.set({ videoLock: { active: true, url: window.location.href, endTime } });
-
-            startBtn.style.display = 'none';
-            endBtn.style.display   = 'block';
-            presets.forEach(b => b.disabled = true);
-            customIn.disabled = true;
-            fab.classList.add('active-lock');
-            sub.textContent = 'remaining';
-
-            const tick = () => {
-                const rem = endTime - Date.now();
-                if (rem <= 0) {
-                    clearInterval(lockInterval);
-                    lockInterval = null;
-                    chrome.storage.local.set({ videoLock: { active: false } });
-                    this._resetLockPanel(panel, fab, presets, customIn, startBtn, endBtn, ring, label, sub);
-                    return;
-                }
-                label.textContent = fmt(rem);
-                const pct = rem / (totalSecs * 1000);
-                ring.style.strokeDashoffset = `${CIRC * (1 - pct)}`;
-                ring.classList.toggle('ending', pct < 0.15);
-            };
-            tick();
-            lockInterval = setInterval(tick, 1000);
+            const totalMs = this._lockSelectedMins * 60 * 1000;
+            const endTime = Date.now() + totalMs;
+            chrome.storage.local.set({
+                videoLock: { active: true, url: window.location.href, endTime, totalMs }
+            });
+            this._startActiveLockUI(endTime, totalMs);
         });
 
         /* ── End lock ── */
-        endBtn.addEventListener('click', () => {
-            clearInterval(lockInterval); lockInterval = null;
-            chrome.storage.local.set({ videoLock: { active: false } });
-            this._resetLockPanel(panel, fab, presets, customIn, startBtn, endBtn, ring, label, sub);
-        });
+        this._endBtn.addEventListener('click', () => this._stopLock());
 
-        /* ── Drag: FAB ── */
+        /* ── Draggable ── */
         this._makeDraggable(fab);
-        /* ── Drag: Panel (via header) ── */
         this._makeDraggable(panel, panel.querySelector('.ft-lk-header'));
+
+        /* ── Resume if lock was already active (page reload) ── */
+        this._resumeLockFromStorage();
     }
 
-    _resetLockPanel(panel, fab, presets, customIn, startBtn, endBtn, ring, label, sub) {
-        fab.classList.remove('active-lock');
-        startBtn.style.display = 'flex';
-        endBtn.style.display   = 'none';
-        presets.forEach(b => b.disabled = false);
-        customIn.disabled = false;
-        ring.style.strokeDashoffset = '0';
-        ring.classList.remove('ending');
-        label.textContent = '25:00';
-        sub.textContent   = 'pick time';
-        panel.classList.remove('visible'); // auto-collapse to FAB
+    _startActiveLockUI(endTime, totalMs) {
+        if (!this._startBtn) return;
+        this._startBtn.style.display  = 'none';
+        this._endBtn.style.display    = 'block';
+        this._presets.forEach(b => b.disabled = true);
+        this._customIn.disabled       = true;
+        this._presetsRow.style.display = 'none';
+        this._customRow.style.display  = 'none';
+        this._fab.classList.add('active-lock');
+        this._fab.textContent        = '⏱';           // 🔒 → ⏱ while running
+        this._titleTxt.textContent   = '⏱ Focus Lock';
+        this._sub.textContent        = 'remaining';
+
+        const tick = () => {
+            const rem = endTime - Date.now();
+            if (rem <= 0) { this._stopLock(); return; }
+            this._label.textContent = this._fmt(rem);
+            const pct = rem / totalMs;
+            this._ring.style.strokeDashoffset = `${this._CIRC * (1 - pct)}`;
+            this._ring.classList.toggle('ending', pct < 0.15);
+        };
+        if (this._lockInterval) clearInterval(this._lockInterval);
+        tick();
+        this._lockInterval = setInterval(tick, 1000);
+    }
+
+    _stopLock() {
+        if (this._lockInterval) { clearInterval(this._lockInterval); this._lockInterval = null; }
+        chrome.storage.local.set({ videoLock: { active: false } });
+        this._resetLockPanel();
+    }
+
+    _resumeLockFromStorage() {
+        chrome.storage.local.get({ videoLock: { active: false } }, (data) => {
+            const lock = data.videoLock;
+            if (!lock || !lock.active || !this._startBtn) return;
+            if (Date.now() >= lock.endTime) {
+                chrome.storage.local.set({ videoLock: { active: false } });
+                return;
+            }
+            const totalMs = lock.totalMs || (lock.endTime - Date.now() + 1000);
+            this._startActiveLockUI(lock.endTime, totalMs);
+        });
+    }
+
+    _resetLockPanel() {
+        if (!this._fab) return;
+        this._fab.classList.remove('active-lock');
+        this._fab.textContent        = '🔒';          // ⏱ → 🔒 restored
+        if (this._titleTxt) this._titleTxt.textContent = '🔒 Focus Lock';
+        this._startBtn.style.display  = 'flex';
+        this._endBtn.style.display    = 'none';
+        this._presets.forEach(b => b.disabled = false);
+        this._customIn.disabled        = false;
+        this._presetsRow.style.display = '';
+        this._customRow.style.display  = '';
+        this._ring.style.strokeDashoffset = '0';
+        this._ring.classList.remove('ending');
+        this._label.textContent = '25:00';
+        this._sub.textContent   = 'pick time';
+        this._panel.classList.remove('visible');
     }
 
     _makeDraggable(el, handle) {
